@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { format, subDays, startOfDay, endOfDay } from 'date-fns'
+import { format, subDays } from 'date-fns'
 
 const DISPATCHED_STATUSES = [
   'Pending Shipping company',
@@ -25,11 +25,7 @@ export function calcMetrics(orders) {
   }
 
   return {
-    total,
-    confirmed,
-    cancelled,
-    dispatched,
-    delivered,
+    total, confirmed, cancelled, dispatched, delivered,
     totalCod: Math.round(totalCod),
     confirmedCod: Math.round(confirmedCod),
     dispatchedCod: Math.round(dispatchedCod),
@@ -42,6 +38,7 @@ export function calcMetrics(orders) {
   }
 }
 
+// Fetch all raw orders for a date range — includes dispatch_datetime and cod
 export async function fetchOrders(from, to) {
   let allData = []
   let page = 0
@@ -50,7 +47,7 @@ export async function fetchOrders(from, to) {
   while (true) {
     const { data, error } = await supabase
       .from('orders')
-      .select('confirmation_status, order_status, cod, created_at, merchant_id, sku, product_name')
+      .select('confirmation_status, order_status, cod, created_at, merchant_id, sku, product_name, dispatch_datetime')
       .gte('created_at', from)
       .lte('created_at', to)
       .range(page * pageSize, (page + 1) * pageSize - 1)
@@ -65,25 +62,114 @@ export async function fetchOrders(from, to) {
   return allData
 }
 
-export async function fetchDailyTimeline(from, to) {
-  const orders = await fetchOrders(from, to)
-  const byDay = {}
+// Apply all filters to raw orders
+export function applyFilters(orders, filters) {
+  const {
+    merchants = [],
+    products = [],
+    minCod = null,
+    maxCod = null,
+    excludeLast10Days = false,
+    dispatchFrom = null,
+    dispatchTo = null,
+  } = filters
 
+  const cutoff10 = excludeLast10Days
+    ? format(subDays(new Date(), 10), 'yyyy-MM-dd')
+    : null
+
+  return orders.filter(o => {
+    // Merchant filter
+    if (merchants.length > 0 && !merchants.includes(String(o.merchant_id))) return false
+
+    // Product filter
+    if (products.length > 0 && !products.includes(o.product_name)) return false
+
+    // COD slider
+    const cod = parseFloat(o.cod) || 0
+    if (minCod !== null && cod < minCod) return false
+    if (maxCod !== null && cod > maxCod) return false
+
+    // Exclude last 10 days
+    if (cutoff10 && o.created_at?.slice(0, 10) >= cutoff10) return false
+
+    // Dispatch date range
+    if (dispatchFrom && o.dispatch_datetime) {
+      if (o.dispatch_datetime.slice(0, 10) < dispatchFrom) return false
+    }
+    if (dispatchTo && o.dispatch_datetime) {
+      if (o.dispatch_datetime.slice(0, 10) > dispatchTo) return false
+    }
+
+    return true
+  })
+}
+
+// Compute daily timeline from filtered orders
+export function computeDailyTimeline(orders) {
+  const byDay = {}
   for (const o of orders) {
     const day = o.created_at?.slice(0, 10)
     if (!day) continue
     if (!byDay[day]) byDay[day] = []
     byDay[day].push(o)
   }
-
   return Object.entries(byDay)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, dayOrders]) => ({
-      day,
-      ...calcMetrics(dayOrders)
-    }))
+    .map(([day, dayOrders]) => ({ day, ...calcMetrics(dayOrders) }))
 }
 
+// Compute merchant breakdown from filtered orders
+export function computeMerchantPerformance(orders) {
+  const byMerchant = {}
+  for (const o of orders) {
+    const mid = String(o.merchant_id || 'Unknown')
+    if (!byMerchant[mid]) byMerchant[mid] = []
+    byMerchant[mid].push(o)
+  }
+  return Object.entries(byMerchant)
+    .map(([merchantId, merchantOrders]) => ({ merchantId, ...calcMetrics(merchantOrders) }))
+    .sort((a, b) => b.total - a.total)
+}
+
+// Compute SKU breakdown from filtered orders
+export function computeSkuPerformance(orders) {
+  const bySku = {}
+  for (const o of orders) {
+    const sku = o.sku || 'Unknown'
+    const name = o.product_name || 'Unknown'
+    const key = `${sku}||${name}`
+    if (!bySku[key]) bySku[key] = []
+    bySku[key].push(o)
+  }
+  return Object.entries(bySku)
+    .map(([key, skuOrders]) => {
+      const [sku, productName] = key.split('||')
+      return { sku, productName, ...calcMetrics(skuOrders) }
+    })
+    .sort((a, b) => b.total - a.total)
+}
+
+// Compute merchant × product matches from filtered orders
+export function computeMerchantSkuPerformance(orders) {
+  const byKey = {}
+  for (const o of orders) {
+    const mid = String(o.merchant_id || 'Unknown')
+    const sku = o.sku || 'Unknown'
+    const name = o.product_name || 'Unknown'
+    const key = `${mid}||${sku}||${name}`
+    if (!byKey[key]) byKey[key] = []
+    byKey[key].push(o)
+  }
+  return Object.entries(byKey)
+    .map(([key, keyOrders]) => {
+      const [merchantId, sku, productName] = key.split('||')
+      return { merchantId, sku, productName, ...calcMetrics(keyOrders) }
+    })
+    .sort((a, b) => b.total - a.total)
+}
+
+// Fetch today vs yesterday hourly
 export async function fetchTodayVsYesterday() {
   const now = new Date()
   const todayStr = format(now, 'yyyy-MM-dd')
@@ -91,7 +177,7 @@ export async function fetchTodayVsYesterday() {
 
   const { data, error } = await supabase
     .from('orders')
-    .select('*')
+    .select('confirmation_status, order_status, cod, created_at')
     .gte('created_at', yesterdayStr)
     .lte('created_at', todayStr + 'T23:59:59')
 
@@ -99,7 +185,6 @@ export async function fetchTodayVsYesterday() {
   const orders = data || []
 
   const today = {}, yesterday = {}
-
   for (const o of orders) {
     const dt = new Date(o.created_at)
     const hour = dt.getHours()
@@ -118,66 +203,5 @@ export async function fetchTodayVsYesterday() {
     hour: `${String(h).padStart(2, '0')}:00`,
     today: (today[h] || []).length,
     yesterday: (yesterday[h] || []).length,
-    todayConfirmed: calcMetrics(today[h] || []).confirmed,
-    yesterdayConfirmed: calcMetrics(yesterday[h] || []).confirmed,
   }))
-}
-
-export async function fetchMerchantPerformance(from, to) {
-  const orders = await fetchOrders(from, to)
-  const byMerchant = {}
-
-  for (const o of orders) {
-    const mid = o.merchant_id || 'Unknown'
-    if (!byMerchant[mid]) byMerchant[mid] = []
-    byMerchant[mid].push(o)
-  }
-
-  return Object.entries(byMerchant)
-    .map(([merchantId, merchantOrders]) => ({
-      merchantId,
-      ...calcMetrics(merchantOrders)
-    }))
-    .sort((a, b) => b.total - a.total)
-}
-
-export async function fetchSkuPerformance(from, to) {
-  const orders = await fetchOrders(from, to)
-  const bySku = {}
-
-  for (const o of orders) {
-    const sku = o.sku || 'Unknown'
-    const name = o.product_name || 'Unknown'
-    const key = `${sku}||${name}`
-    if (!bySku[key]) bySku[key] = []
-    bySku[key].push(o)
-  }
-
-  return Object.entries(bySku)
-    .map(([key, skuOrders]) => {
-      const [sku, productName] = key.split('||')
-      return { sku, productName, ...calcMetrics(skuOrders) }
-    })
-    .sort((a, b) => b.total - a.total)
-}
-
-export async function fetchMerchantSkuPerformance(from, to) {
-  const orders = await fetchOrders(from, to)
-  const byKey = {}
-
-  for (const o of orders) {
-    const mid = o.merchant_id || 'Unknown'
-    const sku = o.sku || 'Unknown'
-    const name = o.product_name || 'Unknown'
-    const key = `${mid}||${sku}||${name}`
-    if (!byKey[key]) byKey[key] = []
-    byKey[key].push(o)
-  }
-
-  return Object.entries(byKey)
-    .map(([key, keyOrders]) => {
-      const [merchantId, sku, productName] = key.split('||')
-      return { merchantId, sku, productName, ...calcMetrics(keyOrders) }
-    })
-    .sort((a, b) => b.total - a.total)
 }
