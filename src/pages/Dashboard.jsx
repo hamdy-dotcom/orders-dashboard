@@ -182,30 +182,47 @@ function RangeSlider({ min, max, value, onChange, label }) {
 
   useEffect(() => { setLocalMin(value[0]); setLocalMax(value[1]) }, [value])
 
-  const pct = v => ((v - min) / (max - min)) * 100
+  const pctMin = max > min ? ((localMin - min) / (max - min)) * 100 : 0
+  const pctMax = max > min ? ((localMax - min) / (max - min)) * 100 : 100
 
   return (
-    <div style={{ minWidth: 200 }}>
-      <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 6 }}>
+    <div style={{ minWidth: 220 }}>
+      <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 8 }}>
         {label}: <span style={{ color: C.text }}>{fmt(localMin)} – {fmt(localMax)} SAR</span>
       </div>
-      <div style={{ position: 'relative', height: 20, display: 'flex', alignItems: 'center' }}>
+      <div style={{ position: 'relative', height: 24, display: 'flex', alignItems: 'center' }}>
+        {/* Track */}
         <div style={{ position: 'absolute', left: 0, right: 0, height: 4, background: C.faint, borderRadius: 2 }} />
+        {/* Active range */}
         <div style={{
-          position: 'absolute', left: pct(localMin) + '%', right: (100 - pct(localMax)) + '%',
+          position: 'absolute', left: pctMin + '%', width: (pctMax - pctMin) + '%',
           height: 4, background: C.accent, borderRadius: 2
         }} />
-        <input type="range" min={min} max={max} value={localMin}
-          onChange={e => { const v = Math.min(Number(e.target.value), localMax - 1); setLocalMin(v) }}
+        {/* Min handle */}
+        <div style={{
+          position: 'absolute', left: pctMin + '%', transform: 'translateX(-50%)',
+          width: 14, height: 14, borderRadius: '50%', background: C.accent,
+          border: '2px solid #fff', boxShadow: '0 0 0 2px ' + C.accent, zIndex: 2, pointerEvents: 'none'
+        }} />
+        {/* Max handle */}
+        <div style={{
+          position: 'absolute', left: pctMax + '%', transform: 'translateX(-50%)',
+          width: 14, height: 14, borderRadius: '50%', background: C.accent,
+          border: '2px solid #fff', boxShadow: '0 0 0 2px ' + C.accent, zIndex: 2, pointerEvents: 'none'
+        }} />
+        {/* Min input */}
+        <input type="range" min={min} max={max} step={Math.max(1, Math.round((max - min) / 200))} value={localMin}
+          onChange={e => setLocalMin(Math.min(Number(e.target.value), localMax - 1))}
           onMouseUp={() => onChange([localMin, localMax])}
           onTouchEnd={() => onChange([localMin, localMax])}
-          style={{ position: 'absolute', width: '100%', opacity: 0, cursor: 'pointer', height: 20 }}
+          style={{ position: 'absolute', width: '100%', opacity: 0, cursor: 'pointer', height: 24, zIndex: 3 }}
         />
-        <input type="range" min={min} max={max} value={localMax}
-          onChange={e => { const v = Math.max(Number(e.target.value), localMin + 1); setLocalMax(v) }}
+        {/* Max input */}
+        <input type="range" min={min} max={max} step={Math.max(1, Math.round((max - min) / 200))} value={localMax}
+          onChange={e => setLocalMax(Math.max(Number(e.target.value), localMin + 1))}
           onMouseUp={() => onChange([localMin, localMax])}
           onTouchEnd={() => onChange([localMin, localMax])}
-          style={{ position: 'absolute', width: '100%', opacity: 0, cursor: 'pointer', height: 20 }}
+          style={{ position: 'absolute', width: '100%', opacity: 0, cursor: 'pointer', height: 24, zIndex: 4 }}
         />
       </div>
     </div>
@@ -313,11 +330,19 @@ export default function Dashboard() {
 
       // Set COD bounds from actual data
       if (orders.length > 0) {
-        const cods = orders.map(o => parseFloat(o.cod) || 0)
-        const minC = Math.floor(Math.min(...cods))
-        const maxC = Math.ceil(Math.max(...cods))
-        setCodBounds([minC, maxC])
-        setCodRange([minC, maxC])
+        const cods = orders.map(o => {
+          let v = o.cod
+          if (v === null || v === undefined) return 0
+          if (typeof v === 'object') v = v.value || v.text || 0
+          const cleaned = String(v).replace(/[^\d.]/g, '')
+          return parseFloat(cleaned) || 0
+        }).filter(v => v > 0)
+        if (cods.length > 0) {
+          const minC = Math.floor(Math.min(...cods))
+          const maxC = Math.ceil(Math.max(...cods))
+          setCodBounds([minC, maxC])
+          setCodRange([minC, maxC])
+        }
       }
 
       // Reset filters on new date range
