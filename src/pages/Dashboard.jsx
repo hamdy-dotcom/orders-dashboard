@@ -596,14 +596,16 @@ export default function Dashboard() {
         {/* KPI Cards */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
           <KpiCard label="Total Orders" value={summary.total} icon="📦" />
-          <KpiCard label="Confirmed" value={summary.confirmed} accent={C.green} icon="✅" sub={fmtPct(summary.confirmationRate) + ' CR'} />
-          <KpiCard label="Dispatched" value={summary.dispatched} accent={C.blue} icon="🚚" sub={fmtPct(summary.dispatchRate) + ' dispatch rate'} />
-          <KpiCard label="Delivered" value={summary.delivered} accent={C.purple} icon="🏠" sub={fmtPct(summary.deliveryRate) + ' delivery rate'} />
-          <KpiCard label="CR%" value={Math.round(summary.confirmationRate * 10) / 10} formatted={v => v + '%'} accent={summary.confirmationRate >= 60 ? C.green : C.accent} icon="📊" />
-          <KpiCard label="NDR%" value={Math.round(summary.netDeliveryRate * 10) / 10} formatted={v => v + '%'} accent={summary.netDeliveryRate >= 30 ? C.green : C.accent} icon="📈" />
+          <KpiCard label="Confirmed" value={summary.confirmed} accent={C.green} icon="✅" sub={fmtPct(summary.confirmationRate) + ' %CR'} />
+          <KpiCard label="%CR" value={Math.round(summary.confirmationRate * 10) / 10} formatted={v => v + '%'} accent={summary.confirmationRate >= 60 ? C.green : C.accent} icon="📊" />
+          <KpiCard label="Dispatched" value={summary.dispatched} accent={C.blue} icon="🚚" sub={fmtPct(summary.dispatchRate) + ' %Dispatch'} />
+          <KpiCard label="%Dispatch" value={Math.round(summary.dispatchRate * 10) / 10} formatted={v => v + '%'} accent={summary.dispatchRate >= 70 ? C.green : C.orange} icon="📤" />
+          <KpiCard label="Delivered" value={summary.delivered} accent={C.purple} icon="🏠" sub={fmtPct(summary.deliveryRate) + ' %DR'} />
+          <KpiCard label="%DR" value={Math.round(summary.deliveryRate * 10) / 10} formatted={v => v + '%'} accent={summary.deliveryRate >= 70 ? C.green : C.accent} icon="📈" />
+          <KpiCard label="%NDR" value={Math.round(summary.netDeliveryRate * 10) / 10} formatted={v => v + '%'} accent={summary.netDeliveryRate >= 30 ? C.green : C.accent} icon="🏆" />
           <KpiCard label="Total COD" value={Math.round(summary.totalCod)} formatted={v => fmt(v) + ' SAR'} icon="💰" />
           <KpiCard label="Conf. COD" value={Math.round(summary.confirmedCod)} formatted={v => fmt(v) + ' SAR'} accent={C.green} icon="💵" />
-          <KpiCard label="DLVD COD" value={Math.round(summary.deliveredCod)} formatted={v => fmt(v) + ' SAR'} accent={C.purple} icon="🏆" />
+          <KpiCard label="DLVD COD" value={Math.round(summary.deliveredCod)} formatted={v => fmt(v) + ' SAR'} accent={C.purple} icon="💎" />
         </div>
 
         {/* Charts */}
@@ -620,8 +622,12 @@ export default function Dashboard() {
                   <Legend wrapperStyle={{ color: C.muted, fontSize: 12 }} />
                   <Line yAxisId="left" type="monotone" dataKey="total" stroke={C.blue} dot={false} strokeWidth={2} name="Total" />
                   <Line yAxisId="left" type="monotone" dataKey="confirmed" stroke={C.green} dot={false} strokeWidth={2} name="Confirmed" />
-                  <Line yAxisId="right" type="monotone" dataKey="confirmationRate" stroke={C.accent} dot={false} strokeWidth={2} name="CR%" strokeDasharray="5 3" />
-                  <Line yAxisId="right" type="monotone" dataKey="netDeliveryRate" stroke={C.purple} dot={false} strokeWidth={2} name="NDR%" strokeDasharray="5 3" />
+                  <Line yAxisId="left" type="monotone" dataKey="dispatched" stroke={C.orange} dot={false} strokeWidth={2} name="Dispatched" />
+                  <Line yAxisId="left" type="monotone" dataKey="delivered" stroke={C.purple} dot={false} strokeWidth={2} name="Delivered" />
+                  <Line yAxisId="right" type="monotone" dataKey="confirmationRate" stroke={C.green} dot={false} strokeWidth={1.5} name="%CR" strokeDasharray="5 3" />
+                  <Line yAxisId="right" type="monotone" dataKey="dispatchRate" stroke={C.orange} dot={false} strokeWidth={1.5} name="%Dispatch" strokeDasharray="5 3" />
+                  <Line yAxisId="right" type="monotone" dataKey="deliveryRate" stroke={C.accent} dot={false} strokeWidth={1.5} name="%DR" strokeDasharray="5 3" />
+                  <Line yAxisId="right" type="monotone" dataKey="netDeliveryRate" stroke={C.purple} dot={false} strokeWidth={1.5} name="%NDR" strokeDasharray="5 3" />
                 </LineChart>
               </ResponsiveContainer>
             </div>
