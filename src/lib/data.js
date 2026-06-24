@@ -160,3 +160,24 @@ export async function fetchSkuPerformance(from, to) {
     })
     .sort((a, b) => b.total - a.total)
 }
+
+export async function fetchMerchantSkuPerformance(from, to) {
+  const orders = await fetchOrders(from, to)
+  const byKey = {}
+
+  for (const o of orders) {
+    const mid = o.merchant_id || 'Unknown'
+    const sku = o.sku || 'Unknown'
+    const name = o.product_name || 'Unknown'
+    const key = `${mid}||${sku}||${name}`
+    if (!byKey[key]) byKey[key] = []
+    byKey[key].push(o)
+  }
+
+  return Object.entries(byKey)
+    .map(([key, keyOrders]) => {
+      const [merchantId, sku, productName] = key.split('||')
+      return { merchantId, sku, productName, ...calcMetrics(keyOrders) }
+    })
+    .sort((a, b) => b.total - a.total)
+}
