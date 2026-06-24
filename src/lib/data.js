@@ -86,9 +86,11 @@ export function applyFilters(orders, filters) {
     if (products.length > 0 && !products.includes(o.product_name)) return false
 
     // COD slider
-    const cod = parseFloat(o.cod) || 0
-    if (minCod !== null && cod < minCod) return false
-    if (maxCod !== null && cod > maxCod) return false
+    let cod = o.cod
+    if (cod !== null && cod !== undefined && typeof cod === 'object') cod = cod.value || cod.text || 0
+    const codVal = parseFloat(String(cod || 0).replace(/[^\d.]/g, '')) || 0
+    if (minCod !== null && codVal < minCod) return false
+    if (maxCod !== null && codVal > maxCod) return false
 
     // Exclude last 10 days
     if (cutoff10 && o.created_at?.slice(0, 10) >= cutoff10) return false
