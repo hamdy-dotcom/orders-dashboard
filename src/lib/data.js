@@ -47,7 +47,7 @@ export async function fetchOrders(from, to) {
   while (true) {
     const { data, error } = await supabase
       .from('orders')
-      .select('confirmation_status, order_status, cod, created_at, merchant_id, sku, product_name, dispatch_datetime')
+      .select('confirmation_status, order_status, cod, created_at, merchant_id, sku, product_name, dispatch_datetime, vendor_cost_vat_inc, pcs')
       .gte('created_at', from)
       .lte('created_at', to)
       .range(page * pageSize, (page + 1) * pageSize - 1)
@@ -153,7 +153,59 @@ export function computeSkuPerformance(orders) {
 }
 
 // Compute merchant × product matches from filtered orders
-export function computeMerchantSkuPerformance(orders) {
+export function calcRoiMetrics(orders, adsSpent = 0) {
+  const delivered = orders.filter(o => o.order_status === 'Delivered')
+
+  const deliveredCount = delivered.length
+  const collected = delivered.reduce((s, o) => s + (parseFloat(String(o.cod || 0).replace(/[^\d.]/g, '')) || 0), 0)
+  const cogs = delivered.reduce((s, o) => {
+    const cost = parseFloat(o.vendor_cost_vat_inc) || 0
+    const pcs = parseFloat(o.pcs) || 1
+    return s + cost * pcs
+  }, 0)
+  const operationCost = deliveredCount * 30
+  const netProfit = collected - adsSpent - operationCost
+  const roi = (cogs + adsSpent) > 0 ? (netProfit / (cogs + adsSpent)) * 100 : 0
+  const dlvdAsp = deliveredCount > 0 ? collected / deliveredCount : 0
+
+  return {
+    deliveredCount,
+    collected: Math.round(collected),
+    cogs: Math.round(cogs),
+    operationCost: Math.round(operationCost),
+    adsSpent: Math.round(adsSpent),
+    netProfit: Math.round(netProfit),
+    roi: Math.round(roi * 10) / 10,
+    dlvdAsp: Math.round(dlvdAsp * 10) / 10,
+  }
+}
+
+export function computeRoiByProduct(orders, adsMap = {}) {
+  const bySku = {}
+  for (const o of orders) {
+    const key = `${o.sku || 'Unknown'}||${o.product_name || 'Unknown'}`
+    if (!bySku[key]) bySku[key] = []
+    bySku[key].push(o)
+  }
+  return Object.entries(bySku).map(([key, skuOrders]) => {
+    const [sku, productName] = key.split('||')
+    const ads = adsMap[key] || 0
+    return { sku, productName, ...calcRoiMetrics(skuOrders, ads) }
+  }).sort((a, b) => b.collected - a.collected)
+}
+
+export function computeRoiByMerchant(orders, adsMap = {}) {
+  const byMerchant = {}
+  for (const o of orders) {
+    const mid = String(o.merchant_id || 'Unknown')
+    if (!byMerchant[mid]) byMerchant[mid] = []
+    byMerchant[mid].push(o)
+  }
+  return Object.entries(byMerchant).map(([merchantId, merchantOrders]) => {
+    const ads = adsMap[merchantId] || 0
+    return { merchantId, ...calcRoiMetrics(merchantOrders, ads) }
+  }).sort((a, b) => b.collected - a.collected)
+}
   const byKey = {}
   for (const o of orders) {
     const mid = String(o.merchant_id || 'Unknown')
