@@ -724,22 +724,27 @@ export default function Dashboard() {
         {/* ROI Analysis Tab */}
         {activeMainTab === 'roi' && (<>
 
-          {/* ROI KPI Cards */}
+          {/* ROI KPI Cards - Performance */}
+          <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 10 }}>Order Performance</div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+            <KpiCard label="Total Orders" value={summary.total} icon="📦" />
+            <KpiCard label="Confirmed" value={summary.confirmed} accent={C.green} icon="✅" sub={fmtPct(summary.confirmationRate) + ' %CR'} />
+            <KpiCard label="%CR" value={Math.round(summary.confirmationRate * 10) / 10} formatted={v => v + '%'} accent={summary.confirmationRate >= 60 ? C.green : C.accent} icon="📊" />
+            <KpiCard label="Delivered" value={summary.delivered} accent={C.purple} icon="🏠" sub={fmtPct(summary.deliveryRate) + ' %DR'} />
+            <KpiCard label="%DR" value={Math.round(summary.deliveryRate * 10) / 10} formatted={v => v + '%'} accent={summary.deliveryRate >= 60 ? C.green : C.accent} icon="📈" />
+            <KpiCard label="%NDR" value={Math.round(summary.netDeliveryRate * 10) / 10} formatted={v => v + '%'} accent={summary.netDeliveryRate >= 30 ? C.green : C.accent} icon="🎯" />
+          </div>
+
+          {/* ROI KPI Cards - Financials */}
+          <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 10 }}>ROI Financials</div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-            <KpiCard label="Delivered Orders" value={roiSummary.deliveredCount} icon="📦" />
             <KpiCard label="DLVD ASP" value={roiSummary.dlvdAsp} formatted={v => fmt(v) + ' SAR'} accent={C.blue} icon="🏷️" />
             <KpiCard label="Collected" value={roiSummary.collected} formatted={v => fmt(v) + ' SAR'} accent={C.green} icon="💵" />
-            <KpiCard label="COGS" value={roiSummary.cogs} formatted={v => fmt(v) + ' SAR'} accent={C.orange} icon="📦"
-              sub="Cost × Delivered Pcs" />
-            <KpiCard label="Operation Cost" value={roiSummary.operationCost} formatted={v => fmt(v) + ' SAR'} accent={C.muted} icon="⚙️"
-              sub="30 SAR × Delivered" />
-            <KpiCard label="Ads Spent" value={roiSummary.adsSpent} formatted={v => fmt(v) + ' SAR'} accent={C.purple} icon="📣"
-              sub="Pending team input" />
-            <KpiCard label="Net Profit" value={roiSummary.netProfit} formatted={v => fmt(v) + ' SAR'}
-              accent={roiSummary.netProfit >= 0 ? C.green : C.accent} icon="📈" />
-            <KpiCard label="ROI" value={roiSummary.roi} formatted={v => v + '%'}
-              accent={roiSummary.roi >= 0 ? C.green : C.accent} icon="🎯"
-              sub="Net Profit / (COGS + Ads)" />
+            <KpiCard label="COGS" value={roiSummary.cogs} formatted={v => fmt(v) + ' SAR'} accent={C.orange} icon="📦" sub={roiSummary.cogs === 0 ? '⚠️ Pending sync' : 'Cost × Delivered Pcs'} />
+            <KpiCard label="Operation Cost" value={roiSummary.operationCost} formatted={v => fmt(v) + ' SAR'} accent={C.muted} icon="⚙️" sub="30 SAR × Delivered" />
+            <KpiCard label="Ads Spent" value={roiSummary.adsSpent} formatted={v => fmt(v) + ' SAR'} accent={C.purple} icon="📣" sub="Pending team input" />
+            <KpiCard label="Net Profit" value={roiSummary.netProfit} formatted={v => fmt(v) + ' SAR'} accent={roiSummary.netProfit >= 0 ? C.green : C.accent} icon="📈" />
+            <KpiCard label="ROI" value={roiSummary.roi} formatted={v => v + '%'} accent={roiSummary.roi >= 0 ? C.green : C.accent} icon="🎯" sub="Net Profit / (COGS + Ads)" />
           </div>
 
           {/* ROI Tables */}
