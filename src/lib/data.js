@@ -43,15 +43,26 @@ export function calcMetrics(orders) {
 }
 
 export async function fetchOrders(from, to) {
-  const { data, error } = await supabase
-    .from('orders')
-    .select('*')
-    .gte('created_at', from)
-    .lte('created_at', to)
-    .order('created_at', { ascending: false })
+  let allData = []
+  let page = 0
+  const pageSize = 1000
 
-  if (error) throw error
-  return data || []
+  while (true) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('confirmation_status, order_status, cod, created_at, merchant_id, sku, product_name')
+      .gte('created_at', from)
+      .lte('created_at', to)
+      .range(page * pageSize, (page + 1) * pageSize - 1)
+
+    if (error) throw error
+    if (!data || data.length === 0) break
+    allData = allData.concat(data)
+    if (data.length < pageSize) break
+    page++
+  }
+
+  return allData
 }
 
 export async function fetchDailyTimeline(from, to) {
