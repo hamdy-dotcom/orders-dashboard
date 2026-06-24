@@ -301,10 +301,11 @@ function SortableTable({ columns, rows, loading }) {
   )
 }
 
-export default function Dashboard() {
+export default function Dashboard({ user }) {
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [rawOrders, setRawOrders] = useState([])
+  const [adsMap, setAdsMap] = useState({})
   const [hourly, setHourly] = useState([])
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -325,11 +326,40 @@ export default function Dashboard() {
     try {
       const from = dateFrom + 'T00:00:00'
       const to = dateTo + 'T23:59:59'
-      const [orders, hly] = await Promise.all([
+      const [orders, hly, adsData] = await Promise.all([
         fetchOrders(from, to),
-        fetchTodayVsYesterday()
+        fetchTodayVsYesterday(),
+        supabase.from('ads_spending').select('*')
       ])
+
+      // Build adsMap: key = sku||productName or merchantId, value = SAR spent in date range
+      const map = {}
+      if (adsData.data) {
+        for (const entry of adsData.data) {
+          const entryFrom = entry.date_from
+          const entryTo = entry.date_to
+          // Check overlap with current date range
+          if (entryTo < dateFrom || entryFrom > dateTo) continue
+          // Calculate overlapping days
+          const overlapFrom = entryFrom > dateFrom ? entryFrom : dateFrom
+          const overlapTo = entryTo < dateTo ? entryTo : dateTo
+          const totalDays = (new Date(entryTo) - new Date(entryFrom)) / 86400000 + 1
+          const overlapDays = (new Date(overlapTo) - new Date(overlapFrom)) / 86400000 + 1
+          const dailySar = (entry.amount_sar || 0) / totalDays
+          const overlapSar = dailySar * overlapDays
+
+          // By product key
+          const productKey = `${entry.sku}||${entry.product_name}`
+          map[productKey] = (map[productKey] || 0) + overlapSar
+
+          // By merchant key
+          const merchantKey = entry.merchant_id
+          map[merchantKey] = (map[merchantKey] || 0) + overlapSar
+        }
+      }
+
       setRawOrders(orders)
+      setAdsMap(map)
       setHourly(hly)
 
       // Set COD bounds from actual data
@@ -385,9 +415,12 @@ export default function Dashboard() {
 
   // Computed tables from filtered orders
   const summary = useMemo(() => calcMetrics(filteredOrders), [filteredOrders])
-  const roiSummary = useMemo(() => calcRoiMetrics(filteredOrders, 0), [filteredOrders])
-  const roiByProduct = useMemo(() => computeRoiByProduct(filteredOrders), [filteredOrders])
-  const roiByMerchant = useMemo(() => computeRoiByMerchant(filteredOrders), [filteredOrders])
+  const roiSummary = useMemo(() => {
+    const totalAds = Object.values(adsMap).reduce((s, v) => s + v, 0) / 2 // divided by 2 because we double-counted merchant+product
+    return calcRoiMetrics(filteredOrders, totalAds)
+  }, [filteredOrders, adsMap])
+  const roiByProduct = useMemo(() => computeRoiByProduct(filteredOrders, adsMap), [filteredOrders, adsMap])
+  const roiByMerchant = useMemo(() => computeRoiByMerchant(filteredOrders, adsMap), [filteredOrders, adsMap])
   const timeline = useMemo(() => computeDailyTimeline(filteredOrders), [filteredOrders])
   const merchants = useMemo(() => computeMerchantPerformance(filteredOrders), [filteredOrders])
   const skus = useMemo(() => computeSkuPerformance(filteredOrders), [filteredOrders])
@@ -480,38 +513,6 @@ export default function Dashboard() {
   return (
     <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: "'Inter', -apple-system, sans-serif", fontSize: 14 }}>
 
-      {/* Header */}
-      <div style={{
-        background: C.surface, borderBottom: `1px solid ${C.border}`,
-        padding: '0 24px', display: 'flex', alignItems: 'center',
-        justifyContent: 'space-between', height: 54, position: 'sticky', top: 0, zIndex: 100
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 28, height: 28, background: C.accent, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800, color: '#fff' }}>N</div>
-          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.3px' }}>NML & Sllr</span>
-          <span style={{ color: C.faint }}>·</span>
-          <span style={{ color: C.muted, fontSize: 13 }}>Performance</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {lastUpdated && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.muted, fontSize: 12 }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green }} />
-              {format(lastUpdated, 'HH:mm')}
-            </div>
-          )}
-          <button onClick={load} disabled={loading} style={{
-            background: loading ? C.faint : C.accent, color: '#fff', border: 'none',
-            borderRadius: 7, padding: '6px 14px', fontSize: 13, cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 600
-          }}>
-            {loading ? '...' : '↻ Refresh'}
-          </button>
-          <button onClick={() => supabase.auth.signOut()} style={{
-            background: 'transparent', color: C.muted, border: `1px solid ${C.border}`,
-            borderRadius: 7, padding: '6px 12px', fontSize: 13, cursor: 'pointer'
-          }}>Sign out</button>
-        </div>
-      </div>
-
       <div style={{ padding: '20px 24px', maxWidth: 1600, margin: '0 auto' }}>
 
         {/* Filter Panel */}
@@ -535,6 +536,11 @@ export default function Dashboard() {
                 }}>{d}d</button>
               ))}
             </div>
+            <button onClick={load} disabled={loading} style={{
+              background: loading ? C.faint : C.accent, color: '#fff', border: 'none',
+              borderRadius: 7, padding: '7px 14px', fontSize: 13, cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 600, marginLeft: 4
+            }}>{loading ? '...' : '↻'}</button>
+            {lastUpdated && <span style={{ color: C.muted, fontSize: 12 }}>Updated {format(lastUpdated, 'HH:mm')}</span>}
           </div>
 
           {/* Divider */}
