@@ -5,6 +5,9 @@ import {
   fetchTodayVsYesterday,
   applyFilters,
   calcMetrics,
+  calcRoiMetrics,
+  computeRoiByProduct,
+  computeRoiByMerchant,
   computeDailyTimeline,
   computeMerchantPerformance,
   computeSkuPerformance,
@@ -306,6 +309,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
   const [activeTab, setActiveTab] = useState('daily')
+  const [activeMainTab, setActiveMainTab] = useState('performance')
 
   // Filters
   const [selectedMerchants, setSelectedMerchants] = useState([])
@@ -381,6 +385,9 @@ export default function Dashboard() {
 
   // Computed tables from filtered orders
   const summary = useMemo(() => calcMetrics(filteredOrders), [filteredOrders])
+  const roiSummary = useMemo(() => calcRoiMetrics(filteredOrders, 0), [filteredOrders])
+  const roiByProduct = useMemo(() => computeRoiByProduct(filteredOrders), [filteredOrders])
+  const roiByMerchant = useMemo(() => computeRoiByMerchant(filteredOrders), [filteredOrders])
   const timeline = useMemo(() => computeDailyTimeline(filteredOrders), [filteredOrders])
   const merchants = useMemo(() => computeMerchantPerformance(filteredOrders), [filteredOrders])
   const skus = useMemo(() => computeSkuPerformance(filteredOrders), [filteredOrders])
@@ -446,6 +453,28 @@ export default function Dashboard() {
     { id: 'merchant', label: 'Merchant' },
     { id: 'sku', label: 'SKU' },
     { id: 'merchantsku', label: 'Merchant × Product' },
+  ]
+
+  const roiCommonCols = [
+    { key: 'deliveredCount', label: 'Delivered', render: v => fmt(v) },
+    { key: 'dlvdAsp', label: 'DLVD ASP', render: v => fmtSAR(v) },
+    { key: 'collected', label: 'Collected', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
+    { key: 'cogs', label: 'COGS', render: v => fmtSAR(v) },
+    { key: 'operationCost', label: 'Op. Cost', render: v => fmtSAR(v) },
+    { key: 'adsSpent', label: 'Ads Spent', render: v => <span style={{ color: C.purple }}>{fmtSAR(v)}</span> },
+    { key: 'netProfit', label: 'Net Profit', render: v => <span style={{ color: v >= 0 ? C.green : C.accent, fontWeight: 700 }}>{fmtSAR(v)}</span> },
+    { key: 'roi', label: 'ROI%', render: v => <RateBadge value={v} /> },
+  ]
+
+  const roiProductCols = [
+    { key: 'sku', label: 'SKU', align: 'left' },
+    { key: 'productName', label: 'Product', align: 'left', render: v => <span title={v}>{v?.slice(0, 35)}{v?.length > 35 ? '…' : ''}</span> },
+    ...roiCommonCols
+  ]
+
+  const roiMerchantCols = [
+    { key: 'merchantId', label: 'Merchant', align: 'left' },
+    ...roiCommonCols
   ]
 
   return (
@@ -593,6 +622,23 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Main Tab Switcher */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
+          {[
+            { id: 'performance', label: '📊 Performance' },
+            { id: 'roi', label: '💰 ROI Analysis' },
+          ].map(t => (
+            <button key={t.id} onClick={() => setActiveMainTab(t.id)} style={{
+              background: activeMainTab === t.id ? C.accent : C.card,
+              color: activeMainTab === t.id ? '#fff' : C.muted,
+              border: `1px solid ${activeMainTab === t.id ? C.accent : C.border}`,
+              borderRadius: 9, padding: '8px 20px', fontSize: 14,
+              cursor: 'pointer', fontWeight: 700, letterSpacing: '-0.2px'
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        {activeMainTab === 'performance' && (<>
         {/* KPI Cards */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
           <KpiCard label="Total Orders" value={summary.total} icon="📦" />
@@ -673,6 +719,56 @@ export default function Dashboard() {
           {activeTab === 'sku' && <SortableTable columns={skuCols} rows={skus} loading={loading} />}
           {activeTab === 'merchantsku' && <SortableTable columns={merchantSkuCols} rows={merchantSkus} loading={loading} />}
         </Panel>
+        </>)}
+
+        {/* ROI Analysis Tab */}
+        {activeMainTab === 'roi' && (<>
+
+          {/* ROI KPI Cards */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+            <KpiCard label="Delivered Orders" value={roiSummary.deliveredCount} icon="📦" />
+            <KpiCard label="DLVD ASP" value={roiSummary.dlvdAsp} formatted={v => fmt(v) + ' SAR'} accent={C.blue} icon="🏷️" />
+            <KpiCard label="Collected" value={roiSummary.collected} formatted={v => fmt(v) + ' SAR'} accent={C.green} icon="💵" />
+            <KpiCard label="COGS" value={roiSummary.cogs} formatted={v => fmt(v) + ' SAR'} accent={C.orange} icon="📦"
+              sub="Cost × Delivered Pcs" />
+            <KpiCard label="Operation Cost" value={roiSummary.operationCost} formatted={v => fmt(v) + ' SAR'} accent={C.muted} icon="⚙️"
+              sub="30 SAR × Delivered" />
+            <KpiCard label="Ads Spent" value={roiSummary.adsSpent} formatted={v => fmt(v) + ' SAR'} accent={C.purple} icon="📣"
+              sub="Pending team input" />
+            <KpiCard label="Net Profit" value={roiSummary.netProfit} formatted={v => fmt(v) + ' SAR'}
+              accent={roiSummary.netProfit >= 0 ? C.green : C.accent} icon="📈" />
+            <KpiCard label="ROI" value={roiSummary.roi} formatted={v => v + '%'}
+              accent={roiSummary.roi >= 0 ? C.green : C.accent} icon="🎯"
+              sub="Net Profit / (COGS + Ads)" />
+          </div>
+
+          {/* ROI Tables */}
+          <Panel
+            title="ROI Breakdown"
+            sub="Performance vs cost analysis"
+            action={
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[{ id: 'product', label: 'By Product' }, { id: 'merchant', label: 'By Merchant' }].map(t => (
+                  <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+                    background: activeTab === t.id ? C.accent : C.bg,
+                    color: activeTab === t.id ? '#fff' : C.muted,
+                    border: `1px solid ${activeTab === t.id ? C.accent : C.border}`,
+                    borderRadius: 7, padding: '5px 12px', fontSize: 12,
+                    cursor: 'pointer', fontWeight: 600
+                  }}>{t.label}</button>
+                ))}
+              </div>
+            }
+          >
+            {activeTab === 'product' && (
+              <SortableTable columns={roiProductCols} rows={roiByProduct} loading={loading} />
+            )}
+            {activeTab === 'merchant' && (
+              <SortableTable columns={roiMerchantCols} rows={roiByMerchant} loading={loading} />
+            )}
+          </Panel>
+        </>)}
+
 
       </div>
 
