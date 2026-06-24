@@ -5,6 +5,7 @@ import {
   fetchTodayVsYesterday,
   fetchMerchantPerformance,
   fetchSkuPerformance,
+  fetchMerchantSkuPerformance,
   calcMetrics,
   fetchOrders
 } from '../lib/data'
@@ -233,6 +234,7 @@ export default function Dashboard() {
   const [hourly, setHourly] = useState([])
   const [merchants, setMerchants] = useState([])
   const [skus, setSkus] = useState([])
+  const [merchantSkus, setMerchantSkus] = useState([])
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -243,17 +245,19 @@ export default function Dashboard() {
     try {
       const from = dateFrom + 'T00:00:00'
       const to = dateTo + 'T23:59:59'
-      const [tl, hly, merch, sku, orders] = await Promise.all([
+      const [tl, hly, merch, sku, msku, orders] = await Promise.all([
         fetchDailyTimeline(from, to),
         fetchTodayVsYesterday(),
         fetchMerchantPerformance(from, to),
         fetchSkuPerformance(from, to),
+        fetchMerchantSkuPerformance(from, to),
         fetchOrders(from, to)
       ])
       setTimeline(tl)
       setHourly(hly)
       setMerchants(merch)
       setSkus(sku)
+      setMerchantSkus(msku)
       setSummary(calcMetrics(orders))
       setLastUpdated(new Date())
     } catch (e) { console.error(e) }
@@ -304,10 +308,25 @@ export default function Dashboard() {
     { key: 'deliveredCod', label: 'DLVD COD', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
   ]
 
+  const merchantSkuCols = [
+    { key: 'merchantId', label: 'Merchant', align: 'left' },
+    { key: 'sku', label: 'SKU', align: 'left' },
+    { key: 'productName', label: 'Product', align: 'left', render: v => <span title={v}>{v?.slice(0, 30)}{v?.length > 30 ? '…' : ''}</span> },
+    { key: 'total', label: 'Orders', render: v => fmt(v) },
+    { key: 'confirmed', label: 'Confirmed', render: v => fmt(v) },
+    { key: 'confirmationRate', label: 'CR%', render: v => <RateBadge value={v} /> },
+    { key: 'dispatchRate', label: 'Dispatch%', render: v => <RateBadge value={v} /> },
+    { key: 'deliveryRate', label: 'Delivery%', render: v => <RateBadge value={v} /> },
+    { key: 'avgSellingPrice', label: 'Avg SAR', render: v => fmtSAR(v) },
+    { key: 'confirmedCod', label: 'Conf. COD', render: v => fmtSAR(v) },
+    { key: 'deliveredCod', label: 'DLVD COD', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
+  ]
+
   const tabs = [
     { id: 'daily', label: 'Daily Performance' },
     { id: 'merchant', label: 'By Merchant' },
     { id: 'sku', label: 'By SKU' },
+    { id: 'merchantsku', label: 'Merchant × Product' },
   ]
 
   return (
@@ -487,6 +506,9 @@ export default function Dashboard() {
           )}
           {activeTab === 'sku' && (
             <SortableTable columns={skuCols} rows={skus} loading={loading} />
+          )}
+          {activeTab === 'merchantsku' && (
+            <SortableTable columns={merchantSkuCols} rows={merchantSkus} loading={loading} />
           )}
         </Panel>
 
