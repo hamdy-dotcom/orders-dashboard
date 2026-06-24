@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
-import ReactApexChart from 'react-apexcharts'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   fetchDailyTimeline,
@@ -10,124 +9,222 @@ import {
   fetchOrders
 } from '../lib/data'
 import { format, subDays } from 'date-fns'
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, Legend, ResponsiveContainer
+} from 'recharts'
 
-const COLORS = {
-  bg: '#0f1117',
-  card: '#1a1d27',
-  border: '#2a2d3e',
-  text: '#e5e7eb',
-  muted: '#6b7280',
-  blue: '#3b82f6',
-  green: '#10b981',
-  red: '#ef4444',
+const C = {
+  bg: '#13151f',
+  surface: '#1c1f2e',
+  card: '#222538',
+  border: '#2e3350',
+  accent: '#e8394a',
+  accentSoft: '#e8394a18',
+  green: '#22c55e',
+  greenSoft: '#22c55e18',
   orange: '#f97316',
-  purple: '#8b5cf6',
+  orangeSoft: '#f9731618',
+  blue: '#3b82f6',
+  blueSoft: '#3b82f618',
+  purple: '#a855f7',
+  text: '#e2e5f0',
+  muted: '#6b7490',
+  faint: '#343855',
 }
 
-function KpiCard({ label, value, sub, color }) {
+const fmt = n => Number(n || 0).toLocaleString()
+const fmtSAR = n => `${fmt(Math.round(n || 0))}`
+const fmtPct = n => `${Number(n || 0).toFixed(1)}%`
+
+function useCountUp(target, duration = 800) {
+  const [val, setVal] = useState(0)
+  const prev = useRef(0)
+  useEffect(() => {
+    const start = prev.current
+    const diff = target - start
+    const steps = 30
+    let i = 0
+    const timer = setInterval(() => {
+      i++
+      setVal(Math.round(start + diff * (i / steps)))
+      if (i >= steps) { clearInterval(timer); prev.current = target }
+    }, duration / steps)
+    return () => clearInterval(timer)
+  }, [target, duration])
+  return val
+}
+
+function KpiCard({ label, value, formatted, sub, accent, icon }) {
+  const animated = useCountUp(value)
   return (
     <div style={{
-      background: COLORS.card,
-      border: `1px solid ${COLORS.border}`,
-      borderRadius: 12,
-      padding: '20px 24px',
-      flex: 1,
-      minWidth: 140
+      background: C.card,
+      border: `1px solid ${C.border}`,
+      borderRadius: 14,
+      padding: '18px 20px',
+      position: 'relative',
+      overflow: 'hidden',
+      flex: '1 1 160px',
+      minWidth: 150,
     }}>
-      <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        {label}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 3,
+        background: accent || C.accent,
+        borderRadius: '14px 14px 0 0'
+      }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
+          {label}
+        </div>
+        {icon && <span style={{ fontSize: 16 }}>{icon}</span>}
       </div>
-      <div style={{ color: color || COLORS.text, fontSize: 26, fontWeight: 700, letterSpacing: '-0.5px' }}>
-        {value}
+      <div style={{ color: C.text, fontSize: 28, fontWeight: 800, letterSpacing: '-0.5px', marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>
+        {formatted ? formatted(animated) : fmt(animated)}
       </div>
-      {sub && <div style={{ color: COLORS.muted, fontSize: 12, marginTop: 4 }}>{sub}</div>}
+      {sub && <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>{sub}</div>}
     </div>
   )
 }
 
-function Section({ title, children }) {
+function RateBadge({ value }) {
+  const n = parseFloat(value) || 0
+  const color = n >= 70 ? C.green : n >= 50 ? C.orange : C.accent
+  const bg = n >= 70 ? C.greenSoft : n >= 50 ? C.orangeSoft : C.accentSoft
   return (
-    <div style={{ marginBottom: 28 }}>
+    <span style={{
+      background: bg, color, padding: '3px 9px',
+      borderRadius: 6, fontSize: 12, fontWeight: 700,
+      fontVariantNumeric: 'tabular-nums'
+    }}>
+      {fmtPct(n)}
+    </span>
+  )
+}
+
+function Panel({ title, sub, children, action }) {
+  return (
+    <div style={{
+      background: C.card, border: `1px solid ${C.border}`,
+      borderRadius: 14, overflow: 'hidden'
+    }}>
       <div style={{
-        color: COLORS.muted,
-        fontSize: 11,
-        textTransform: 'uppercase',
-        letterSpacing: '0.1em',
-        marginBottom: 12,
-        paddingLeft: 2
+        padding: '16px 20px', borderBottom: `1px solid ${C.border}`,
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center'
       }}>
-        {title}
+        <div>
+          <div style={{ color: C.text, fontWeight: 700, fontSize: 14 }}>{title}</div>
+          {sub && <div style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>{sub}</div>}
+        </div>
+        {action}
       </div>
       {children}
     </div>
   )
 }
 
-function DataTable({ columns, rows, loading }) {
-  if (loading) return <div style={{ color: COLORS.muted, padding: 24, textAlign: 'center' }}>Loading...</div>
-  if (!rows.length) return <div style={{ color: COLORS.muted, padding: 24, textAlign: 'center' }}>No data</div>
-
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr>
-            {columns.map(col => (
-              <th key={col.key} style={{
-                padding: '10px 14px',
-                textAlign: col.align || 'left',
-                color: COLORS.muted,
-                fontSize: 11,
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: `1px solid ${COLORS.border}`,
-                whiteSpace: 'nowrap'
-              }}>
-                {col.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-              {columns.map(col => (
-                <td key={col.key} style={{
-                  padding: '10px 14px',
-                  textAlign: col.align || 'left',
-                  color: col.color ? col.color(row[col.key]) : COLORS.text,
-                  whiteSpace: 'nowrap'
-                }}>
-                  {col.render ? col.render(row[col.key], row) : row[col.key]}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div style={{
+      background: C.surface, border: `1px solid ${C.border}`,
+      borderRadius: 10, padding: '12px 16px', fontSize: 13
+    }}>
+      <div style={{ color: C.muted, marginBottom: 8, fontWeight: 600 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ color: p.color, marginBottom: 3 }}>
+          {p.name}: <strong>{typeof p.value === 'number' && p.name?.includes('%') ? fmtPct(p.value) : fmt(p.value)}</strong>
+        </div>
+      ))}
     </div>
   )
 }
 
-function RateBadge({ value }) {
-  const color = value >= 70 ? COLORS.green : value >= 50 ? COLORS.orange : COLORS.red
+function SortableTable({ columns, rows, loading, maxRows = 50 }) {
+  const [sort, setSort] = useState({ key: columns[0]?.key, dir: -1 })
+  const [page, setPage] = useState(1)
+  const PER = 15
+
+  const sorted = [...(rows || [])].sort((a, b) => {
+    const av = a[sort.key], bv = b[sort.key]
+    if (typeof av === 'string') return sort.dir * av.localeCompare(bv)
+    return sort.dir * ((av || 0) - (bv || 0))
+  })
+
+  const pages = Math.max(1, Math.ceil(sorted.length / PER))
+  const slice = sorted.slice((page - 1) * PER, page * PER)
+
+  const handleSort = key => {
+    setSort(s => ({ key, dir: s.key === key ? -s.dir : -1 }))
+    setPage(1)
+  }
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: 'center', color: C.muted }}>Loading...</div>
+  )
+
   return (
-    <span style={{
-      background: color + '22',
-      color,
-      padding: '2px 8px',
-      borderRadius: 4,
-      fontSize: 12,
-      fontWeight: 600
-    }}>
-      {value}%
-    </span>
+    <div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              {columns.map(col => (
+                <th key={col.key}
+                  onClick={() => handleSort(col.key)}
+                  style={{
+                    padding: '10px 14px', textAlign: col.align || 'right',
+                    color: sort.key === col.key ? C.accent : C.muted,
+                    fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em',
+                    borderBottom: `1px solid ${C.border}`, background: C.surface,
+                    cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none',
+                    fontWeight: 600
+                  }}>
+                  {col.label} {sort.key === col.key ? (sort.dir < 0 ? '↓' : '↑') : ''}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {slice.map((row, i) => (
+              <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}
+                onMouseEnter={e => e.currentTarget.style.background = C.surface}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                {columns.map(col => (
+                  <td key={col.key} style={{
+                    padding: '10px 14px', textAlign: col.align || 'right',
+                    color: C.text, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums'
+                  }}>
+                    {col.render ? col.render(row[col.key], row) : row[col.key]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {pages > 1 && (
+        <div style={{
+          padding: '12px 20px', borderTop: `1px solid ${C.border}`,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          color: C.muted, fontSize: 12
+        }}>
+          <span>Page {page} of {pages} · {sorted.length} rows</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>
+              ←
+            </button>
+            <button onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page >= pages}
+              style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>
+              →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
-
-function fmt(n) { return n?.toLocaleString() || '0' }
-function fmtSAR(n) { return `${fmt(Math.round(n))} SAR` }
-function fmtRate(n) { return `${n}%` }
 
 export default function Dashboard() {
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
@@ -139,13 +236,13 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
+  const [activeTab, setActiveTab] = useState('daily')
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const from = dateFrom + 'T00:00:00'
       const to = dateTo + 'T23:59:59'
-
       const [tl, hly, merch, sku, orders] = await Promise.all([
         fetchDailyTimeline(from, to),
         fetchTodayVsYesterday(),
@@ -153,267 +250,256 @@ export default function Dashboard() {
         fetchSkuPerformance(from, to),
         fetchOrders(from, to)
       ])
-
       setTimeline(tl)
       setHourly(hly)
       setMerchants(merch)
       setSkus(sku)
       setSummary(calcMetrics(orders))
       setLastUpdated(new Date())
-    } catch (e) {
-      console.error(e)
-    }
+    } catch (e) { console.error(e) }
     setLoading(false)
   }, [dateFrom, dateTo])
 
   useEffect(() => { load() }, [load])
 
-  async function handleLogout() {
-    await supabase.auth.signOut()
+  const quickRange = days => {
+    setDateFrom(format(subDays(new Date(), days), 'yyyy-MM-dd'))
+    setDateTo(format(new Date(), 'yyyy-MM-dd'))
   }
-
-  const timelineOpts = {
-    chart: { type: 'line', background: 'transparent', toolbar: { show: false }, animations: { enabled: false } },
-    stroke: { curve: 'smooth', width: [3, 2, 2, 2, 2] },
-    xaxis: {
-      categories: timeline.map(d => d.day.slice(5)),
-      labels: { style: { colors: COLORS.muted, fontSize: '11px' } },
-      axisBorder: { color: COLORS.border },
-      axisTicks: { color: COLORS.border }
-    },
-    yaxis: [
-      { labels: { style: { colors: COLORS.muted }, formatter: v => fmt(v) } },
-      { opposite: true, min: 0, max: 100, labels: { style: { colors: COLORS.muted }, formatter: v => v + '%' } }
-    ],
-    colors: [COLORS.blue, COLORS.green, COLORS.orange, COLORS.red, COLORS.purple],
-    legend: { labels: { colors: COLORS.text }, fontSize: '12px' },
-    grid: { borderColor: COLORS.border },
-    tooltip: { theme: 'dark' }
-  }
-
-  const timelineSeries = [
-    { name: 'Total Orders', type: 'line', data: timeline.map(d => d.total) },
-    { name: 'Confirmed', type: 'line', data: timeline.map(d => d.confirmed) },
-    { name: 'Dispatched', type: 'line', data: timeline.map(d => d.dispatched) },
-    { name: 'Confirmation Rate %', type: 'line', data: timeline.map(d => d.confirmationRate) },
-    { name: 'Delivery Rate %', type: 'line', data: timeline.map(d => d.deliveryRate) },
-  ]
-
-  const hourlyOpts = {
-    chart: { type: 'bar', background: 'transparent', toolbar: { show: false } },
-    plotOptions: { bar: { columnWidth: '60%', borderRadius: 3 } },
-    xaxis: {
-      categories: hourly.map(h => h.hour),
-      labels: { style: { colors: COLORS.muted, fontSize: '10px' }, rotate: -45 }
-    },
-    yaxis: { labels: { style: { colors: COLORS.muted } } },
-    colors: [COLORS.blue, COLORS.orange],
-    legend: { labels: { colors: COLORS.text } },
-    grid: { borderColor: COLORS.border },
-    tooltip: { theme: 'dark' }
-  }
-
-  const hourlySeries = [
-    { name: 'Today', data: hourly.map(h => h.today) },
-    { name: 'Yesterday', data: hourly.map(h => h.yesterday) }
-  ]
 
   const dailyCols = [
-    { key: 'day', label: 'Date' },
-    { key: 'total', label: 'Orders', align: 'right', render: v => fmt(v) },
-    { key: 'confirmed', label: 'Confirmed', align: 'right', render: v => fmt(v) },
-    { key: 'confirmationRate', label: 'CR%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'dispatchRate', label: 'Dispatch%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'deliveryRate', label: 'Delivery%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'netDeliveryRate', label: 'Net Del%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'avgSellingPrice', label: 'Avg Price', align: 'right', render: v => `${fmt(Math.round(v))} SAR` },
-    { key: 'confirmedCod', label: 'Confirmed COD', align: 'right', render: v => fmtSAR(v) },
-    { key: 'dispatchedCod', label: 'Dispatched COD', align: 'right', render: v => fmtSAR(v) },
-    { key: 'deliveredCod', label: 'Delivered COD', align: 'right', render: v => fmtSAR(v) },
+    { key: 'day', label: 'Date', align: 'left', render: v => <span style={{ color: C.muted }}>{v}</span> },
+    { key: 'total', label: 'Orders', render: v => fmt(v) },
+    { key: 'confirmed', label: 'Confirmed', render: v => <span style={{ color: C.green }}>{fmt(v)}</span> },
+    { key: 'confirmationRate', label: 'CR%', render: v => <RateBadge value={v} /> },
+    { key: 'dispatchRate', label: 'Dispatch%', render: v => <RateBadge value={v} /> },
+    { key: 'deliveryRate', label: 'Delivery%', render: v => <RateBadge value={v} /> },
+    { key: 'netDeliveryRate', label: 'Net Del%', render: v => <RateBadge value={v} /> },
+    { key: 'avgSellingPrice', label: 'Avg SAR', render: v => fmtSAR(v) },
+    { key: 'confirmedCod', label: 'Conf. COD', render: v => fmtSAR(v) },
+    { key: 'deliveredCod', label: 'DLVD COD', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
   ]
 
   const merchantCols = [
-    { key: 'merchantId', label: 'Merchant ID' },
-    { key: 'total', label: 'Orders', align: 'right', render: v => fmt(v) },
-    { key: 'confirmed', label: 'Confirmed', align: 'right', render: v => fmt(v) },
-    { key: 'confirmationRate', label: 'CR%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'dispatchRate', label: 'Dispatch%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'deliveryRate', label: 'Delivery%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'netDeliveryRate', label: 'Net Del%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'avgSellingPrice', label: 'Avg Price', align: 'right', render: v => `${fmt(Math.round(v))} SAR` },
-    { key: 'confirmedCod', label: 'Confirmed COD', align: 'right', render: v => fmtSAR(v) },
-    { key: 'deliveredCod', label: 'Delivered COD', align: 'right', render: v => fmtSAR(v) },
+    { key: 'merchantId', label: 'Merchant', align: 'left' },
+    { key: 'total', label: 'Orders', render: v => fmt(v) },
+    { key: 'confirmed', label: 'Confirmed', render: v => fmt(v) },
+    { key: 'confirmationRate', label: 'CR%', render: v => <RateBadge value={v} /> },
+    { key: 'dispatchRate', label: 'Dispatch%', render: v => <RateBadge value={v} /> },
+    { key: 'deliveryRate', label: 'Delivery%', render: v => <RateBadge value={v} /> },
+    { key: 'avgSellingPrice', label: 'Avg SAR', render: v => fmtSAR(v) },
+    { key: 'confirmedCod', label: 'Conf. COD', render: v => fmtSAR(v) },
+    { key: 'deliveredCod', label: 'DLVD COD', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
   ]
 
   const skuCols = [
-    { key: 'sku', label: 'SKU' },
-    { key: 'productName', label: 'Product', render: v => <span title={v}>{v?.slice(0, 40)}{v?.length > 40 ? '…' : ''}</span> },
-    { key: 'total', label: 'Orders', align: 'right', render: v => fmt(v) },
-    { key: 'confirmed', label: 'Confirmed', align: 'right', render: v => fmt(v) },
-    { key: 'confirmationRate', label: 'CR%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'deliveryRate', label: 'Delivery%', align: 'right', render: v => <RateBadge value={v} /> },
-    { key: 'avgSellingPrice', label: 'Avg Price', align: 'right', render: v => `${fmt(Math.round(v))} SAR` },
-    { key: 'confirmedCod', label: 'Confirmed COD', align: 'right', render: v => fmtSAR(v) },
-    { key: 'deliveredCod', label: 'Delivered COD', align: 'right', render: v => fmtSAR(v) },
+    { key: 'sku', label: 'SKU', align: 'left' },
+    { key: 'productName', label: 'Product', align: 'left', render: v => <span title={v} style={{ color: C.text }}>{v?.slice(0, 35)}{v?.length > 35 ? '…' : ''}</span> },
+    { key: 'total', label: 'Orders', render: v => fmt(v) },
+    { key: 'confirmed', label: 'Confirmed', render: v => fmt(v) },
+    { key: 'confirmationRate', label: 'CR%', render: v => <RateBadge value={v} /> },
+    { key: 'deliveryRate', label: 'Delivery%', render: v => <RateBadge value={v} /> },
+    { key: 'avgSellingPrice', label: 'Avg SAR', render: v => fmtSAR(v) },
+    { key: 'confirmedCod', label: 'Conf. COD', render: v => fmtSAR(v) },
+    { key: 'deliveredCod', label: 'DLVD COD', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
+  ]
+
+  const tabs = [
+    { id: 'daily', label: 'Daily Performance' },
+    { id: 'merchant', label: 'By Merchant' },
+    { id: 'sku', label: 'By SKU' },
   ]
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: COLORS.bg,
-      color: COLORS.text,
-      fontFamily: "'Inter', -apple-system, sans-serif",
-      fontSize: 14
-    }}>
+    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: "'Inter', -apple-system, sans-serif", fontSize: 14 }}>
+
       {/* Header */}
       <div style={{
-        background: COLORS.card,
-        borderBottom: `1px solid ${COLORS.border}`,
-        padding: '0 24px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        height: 56,
-        position: 'sticky',
-        top: 0,
-        zIndex: 100
+        background: C.surface, borderBottom: `1px solid ${C.border}`,
+        padding: '0 24px', display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between', height: 54,
+        position: 'sticky', top: 0, zIndex: 100
       }}>
-        <div style={{ fontWeight: 700, fontSize: 16, letterSpacing: '-0.3px' }}>
-          NML & Sllr · Performance Dashboard
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            width: 28, height: 28, background: C.accent, borderRadius: 7,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 14, fontWeight: 800, color: '#fff'
+          }}>N</div>
+          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.3px' }}>NML & Sllr</span>
+          <span style={{ color: C.faint }}>·</span>
+          <span style={{ color: C.muted, fontSize: 13 }}>Performance</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {lastUpdated && (
-            <span style={{ color: COLORS.muted, fontSize: 12 }}>
-              Updated {format(lastUpdated, 'HH:mm')}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.muted, fontSize: 12 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, animation: 'pulse 2s infinite' }} />
+              {format(lastUpdated, 'HH:mm')}
+            </div>
           )}
           <button onClick={load} disabled={loading} style={{
-            background: COLORS.blue,
-            color: '#fff',
-            border: 'none',
-            borderRadius: 6,
-            padding: '6px 14px',
-            fontSize: 13,
-            cursor: 'pointer',
-            fontWeight: 500
+            background: loading ? C.faint : C.accent, color: '#fff',
+            border: 'none', borderRadius: 7, padding: '6px 14px',
+            fontSize: 13, cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 600
           }}>
-            {loading ? '...' : 'Refresh'}
+            {loading ? 'Loading...' : '↻ Refresh'}
           </button>
-          <button onClick={handleLogout} style={{
-            background: 'transparent',
-            color: COLORS.muted,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: 6,
-            padding: '6px 14px',
-            fontSize: 13,
-            cursor: 'pointer'
+          <button onClick={() => supabase.auth.signOut()} style={{
+            background: 'transparent', color: C.muted,
+            border: `1px solid ${C.border}`, borderRadius: 7,
+            padding: '6px 12px', fontSize: 13, cursor: 'pointer'
           }}>
-            Sign Out
+            Sign out
           </button>
         </div>
       </div>
 
-      <div style={{ padding: '24px', maxWidth: 1600, margin: '0 auto' }}>
+      <div style={{ padding: '20px 24px', maxWidth: 1600, margin: '0 auto' }}>
 
-        {/* Date Filter */}
+        {/* Filters */}
         <div style={{
-          background: COLORS.card,
-          border: `1px solid ${COLORS.border}`,
-          borderRadius: 12,
-          padding: '16px 20px',
-          marginBottom: 24,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 16,
-          flexWrap: 'wrap'
+          background: C.card, border: `1px solid ${C.border}`,
+          borderRadius: 12, padding: '14px 18px', marginBottom: 20,
+          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap'
         }}>
-          <span style={{ color: COLORS.muted, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Date Range
-          </span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '6px 10px', color: COLORS.text, fontSize: 13 }} />
-          <span style={{ color: COLORS.muted }}>→</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '6px 10px', color: COLORS.text, fontSize: 13 }} />
-          {[7, 14, 30, 60].map(days => (
-            <button key={days} onClick={() => {
-              setDateFrom(format(subDays(new Date(), days), 'yyyy-MM-dd'))
-              setDateTo(format(new Date(), 'yyyy-MM-dd'))
-            }} style={{
-              background: COLORS.bg, color: COLORS.muted, border: `1px solid ${COLORS.border}`,
-              borderRadius: 6, padding: '6px 12px', fontSize: 12, cursor: 'pointer'
-            }}>
-              Last {days}d
-            </button>
-          ))}
+          <span style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>Range</span>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{
+            background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7,
+            padding: '6px 10px', color: C.text, fontSize: 13, outline: 'none'
+          }} />
+          <span style={{ color: C.muted }}>→</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{
+            background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7,
+            padding: '6px 10px', color: C.text, fontSize: 13, outline: 'none'
+          }} />
+          <div style={{ display: 'flex', gap: 6, marginLeft: 4 }}>
+            {[7, 14, 30, 60].map(d => (
+              <button key={d} onClick={() => quickRange(d)} style={{
+                background: C.bg, color: C.muted, border: `1px solid ${C.border}`,
+                borderRadius: 7, padding: '5px 11px', fontSize: 12, cursor: 'pointer', fontWeight: 500
+              }}>
+                {d}d
+              </button>
+            ))}
+          </div>
+          {summary && !loading && (
+            <span style={{ marginLeft: 'auto', color: C.muted, fontSize: 12 }}>
+              {fmt(summary.total)} orders in range
+            </span>
+          )}
         </div>
 
         {/* KPI Cards */}
         {summary && (
-          <Section title="Summary">
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
-              <KpiCard label="Total Orders" value={fmt(summary.total)} />
-              <KpiCard label="Confirmed" value={fmt(summary.confirmed)} color={COLORS.green} />
-              <KpiCard label="Dispatched" value={fmt(summary.dispatched)} color={COLORS.blue} />
-              <KpiCard label="Delivered" value={fmt(summary.delivered)} color={COLORS.purple} />
-              <KpiCard label="Confirmation Rate" value={fmtRate(summary.confirmationRate)} color={summary.confirmationRate >= 70 ? COLORS.green : COLORS.orange} />
-              <KpiCard label="Delivery Rate" value={fmtRate(summary.deliveryRate)} color={summary.deliveryRate >= 70 ? COLORS.green : COLORS.orange} />
-              <KpiCard label="Dispatch Rate" value={fmtRate(summary.dispatchRate)} color={summary.dispatchRate >= 70 ? COLORS.green : COLORS.orange} />
-              <KpiCard label="Total COD" value={fmtSAR(summary.totalCod)} />
-              <KpiCard label="Confirmed COD" value={fmtSAR(summary.confirmedCod)} color={COLORS.green} />
-              <KpiCard label="Delivered COD" value={fmtSAR(summary.deliveredCod)} color={COLORS.purple} />
-            </div>
-          </Section>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+            <KpiCard label="Total Orders" value={summary.total} icon="📦" />
+            <KpiCard label="Confirmed" value={summary.confirmed} accent={C.green} icon="✅"
+              sub={fmtPct(summary.confirmationRate) + ' CR'} />
+            <KpiCard label="Dispatched" value={summary.dispatched} accent={C.blue} icon="🚚"
+              sub={fmtPct(summary.dispatchRate) + ' of confirmed'} />
+            <KpiCard label="Delivered" value={summary.delivered} accent={C.purple} icon="🏠"
+              sub={fmtPct(summary.deliveryRate) + ' delivery rate'} />
+            <KpiCard label="Conf. Rate" value={Math.round(summary.confirmationRate * 10) / 10}
+              formatted={v => v + '%'}
+              accent={summary.confirmationRate >= 60 ? C.green : C.accent} icon="📊" />
+            <KpiCard label="Delivery Rate" value={Math.round(summary.deliveryRate * 10) / 10}
+              formatted={v => v + '%'}
+              accent={summary.deliveryRate >= 60 ? C.green : C.accent} icon="📈" />
+            <KpiCard label="Total COD" value={Math.round(summary.totalCod)}
+              formatted={v => fmt(v) + ' SAR'} icon="💰" />
+            <KpiCard label="Delivered COD" value={Math.round(summary.deliveredCod)}
+              formatted={v => fmt(v) + ' SAR'} accent={C.green} icon="💵" />
+            <KpiCard label="Avg Order SAR" value={Math.round(summary.avgSellingPrice)}
+              formatted={v => fmt(v) + ' SAR'} accent={C.orange} icon="🏷️" />
+          </div>
         )}
 
-        {/* Panel 1: Daily Timeline */}
-        <Section title="Daily Orders Performance">
-          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: '20px 16px' }}>
-            {loading ? (
-              <div style={{ color: COLORS.muted, textAlign: 'center', padding: 40 }}>Loading chart...</div>
-            ) : (
-              <ReactApexChart options={timelineOpts} series={timelineSeries} height={300} />
-            )}
-          </div>
-        </Section>
+        {/* Charts Row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginBottom: 20 }}>
 
-        {/* Panel 2: Today vs Yesterday */}
-        <Section title="Today vs Yesterday — Hourly Orders">
-          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: '20px 16px' }}>
-            {loading ? (
-              <div style={{ color: COLORS.muted, textAlign: 'center', padding: 40 }}>Loading chart...</div>
-            ) : (
-              <ReactApexChart options={hourlyOpts} series={hourlySeries} type="bar" height={280} />
-            )}
-          </div>
-        </Section>
+          {/* Timeline Chart */}
+          <Panel title="Daily Orders Timeline" sub="Orders, confirmed & rates over time">
+            <div style={{ padding: '16px 8px 8px' }}>
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={timeline} margin={{ top: 4, right: 20, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                  <XAxis dataKey="day" tick={{ fill: C.muted, fontSize: 11 }}
+                    tickFormatter={v => v?.slice(5)} stroke={C.border} />
+                  <YAxis yAxisId="left" tick={{ fill: C.muted, fontSize: 11 }} stroke={C.border} />
+                  <YAxis yAxisId="right" orientation="right" domain={[0, 100]}
+                    tick={{ fill: C.muted, fontSize: 11 }} stroke={C.border}
+                    tickFormatter={v => v + '%'} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ color: C.muted, fontSize: 12 }} />
+                  <Line yAxisId="left" type="monotone" dataKey="total" stroke={C.blue} dot={false} strokeWidth={2} name="Total" />
+                  <Line yAxisId="left" type="monotone" dataKey="confirmed" stroke={C.green} dot={false} strokeWidth={2} name="Confirmed" />
+                  <Line yAxisId="right" type="monotone" dataKey="confirmationRate" stroke={C.accent} dot={false} strokeWidth={2} name="CR%" strokeDasharray="5 3" />
+                  <Line yAxisId="right" type="monotone" dataKey="deliveryRate" stroke={C.purple} dot={false} strokeWidth={2} name="Del%" strokeDasharray="5 3" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
 
-        {/* Panel 3: Daily Performance Table */}
-        <Section title="Daily Performance Table">
-          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, overflow: 'hidden' }}>
-            <DataTable
-              columns={dailyCols}
-              rows={[...timeline].reverse()}
-              loading={loading}
-            />
-          </div>
-        </Section>
+          {/* Today vs Yesterday */}
+          <Panel title="Today vs Yesterday" sub="Hourly order volume comparison">
+            <div style={{ padding: '16px 8px 8px' }}>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={hourly} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                  <XAxis dataKey="hour" tick={{ fill: C.muted, fontSize: 10 }} stroke={C.border}
+                    tickFormatter={v => v?.slice(0, 2)} interval={2} />
+                  <YAxis tick={{ fill: C.muted, fontSize: 11 }} stroke={C.border} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ color: C.muted, fontSize: 12 }} />
+                  <Bar dataKey="today" fill={C.blue} name="Today" radius={[3, 3, 0, 0]} maxBarSize={16} />
+                  <Bar dataKey="yesterday" fill={C.faint} name="Yesterday" radius={[3, 3, 0, 0]} maxBarSize={16} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+        </div>
 
-        {/* Panel 4: Merchant Performance */}
-        <Section title="Merchant Performance">
-          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, overflow: 'hidden' }}>
-            <DataTable columns={merchantCols} rows={merchants} loading={loading} />
-          </div>
-        </Section>
-
-        {/* Panel 5: SKU Performance */}
-        <Section title="Product SKU Performance">
-          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, overflow: 'hidden' }}>
-            <DataTable columns={skuCols} rows={skus} loading={loading} />
-          </div>
-        </Section>
+        {/* Tables */}
+        <Panel
+          title="Performance Tables"
+          sub="Detailed breakdown — click headers to sort"
+          action={
+            <div style={{ display: 'flex', gap: 4 }}>
+              {tabs.map(t => (
+                <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+                  background: activeTab === t.id ? C.accent : C.bg,
+                  color: activeTab === t.id ? '#fff' : C.muted,
+                  border: `1px solid ${activeTab === t.id ? C.accent : C.border}`,
+                  borderRadius: 7, padding: '5px 12px', fontSize: 12,
+                  cursor: 'pointer', fontWeight: 600
+                }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          }
+        >
+          {activeTab === 'daily' && (
+            <SortableTable columns={dailyCols} rows={[...timeline].reverse()} loading={loading} />
+          )}
+          {activeTab === 'merchant' && (
+            <SortableTable columns={merchantCols} rows={merchants} loading={loading} />
+          )}
+          {activeTab === 'sku' && (
+            <SortableTable columns={skuCols} rows={skus} loading={loading} />
+          )}
+        </Panel>
 
       </div>
+
+      <style>{`
+        @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+        * { scrollbar-width: thin; scrollbar-color: ${C.faint} transparent; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: ${C.faint}; border-radius: 3px; }
+      `}</style>
     </div>
   )
 }
