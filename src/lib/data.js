@@ -206,6 +206,8 @@ export function computeRoiByMerchant(orders, adsMap = {}) {
     return { merchantId, ...calcRoiMetrics(merchantOrders, ads) }
   }).sort((a, b) => b.collected - a.collected)
 }
+
+export function computeMerchantSkuPerformance(orders) {
   const byKey = {}
   for (const o of orders) {
     const mid = String(o.merchant_id || 'Unknown')
