@@ -48,7 +48,7 @@ export default function Login() {
           </div>
         </div>
 
-        <form onSubmit={handleLogin}>
+        <form onSubmit={handleLogin} autoComplete="off">
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', color: '#9ca3af', fontSize: 13, marginBottom: 6 }}>
               Email
