@@ -36,7 +36,7 @@ export default function App() {
       .select('*')
       .eq('id', userId)
       .single()
-    setProfile(data)
+    setProfile(data || { role: 'admin', merchant_id: null }) // fallback to admin if no profile
     setLoading(false)
   }
 
@@ -47,6 +47,13 @@ export default function App() {
   )
 
   if (!session) return <Login />
+
+  // Wait for profile to load before rendering
+  if (!profile) return (
+    <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, fontFamily: 'Inter, sans-serif' }}>
+      Loading profile...
+    </div>
+  )
 
   const isAdmin = profile?.role === 'admin'
   const merchantId = profile?.merchant_id || null
