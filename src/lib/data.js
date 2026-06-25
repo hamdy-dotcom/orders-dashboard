@@ -39,19 +39,22 @@ export function calcMetrics(orders) {
 }
 
 // Fetch all raw orders for a date range — includes dispatch_datetime and cod
-export async function fetchOrders(from, to) {
+export async function fetchOrders(from, to, merchantId = null) {
   let allData = []
   let page = 0
   const pageSize = 1000
 
   while (true) {
-    const { data, error } = await supabase
+    let query = supabase
       .from('orders')
       .select('confirmation_status, order_status, cod, created_at, merchant_id, sku, product_name, dispatch_datetime, vendor_cost_vat_inc, pcs')
       .gte('created_at', from)
       .lte('created_at', to)
       .range(page * pageSize, (page + 1) * pageSize - 1)
 
+    if (merchantId) query = query.eq('merchant_id', merchantId)
+
+    const { data, error } = await query
     if (error) throw error
     if (!data || data.length === 0) break
     allData = allData.concat(data)
@@ -226,17 +229,20 @@ export function computeMerchantSkuPerformance(orders) {
 }
 
 // Fetch today vs yesterday hourly
-export async function fetchTodayVsYesterday() {
+export async function fetchTodayVsYesterday(merchantId = null) {
   const now = new Date()
   const todayStr = format(now, 'yyyy-MM-dd')
   const yesterdayStr = format(subDays(now, 1), 'yyyy-MM-dd')
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('orders')
     .select('confirmation_status, order_status, cod, created_at')
     .gte('created_at', yesterdayStr)
     .lte('created_at', todayStr + 'T23:59:59')
 
+  if (merchantId) query = query.eq('merchant_id', merchantId)
+
+  const { data, error } = await query
   if (error) throw error
   const orders = data || []
 
