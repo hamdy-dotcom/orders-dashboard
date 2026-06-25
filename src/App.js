@@ -11,19 +11,33 @@ const C = {
 
 export default function App() {
   const [session, setSession] = useState(null)
+  const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activePage, setActivePage] = useState('dashboard')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
-      setLoading(false)
+      if (session) fetchProfile(session.user.id)
+      else setLoading(false)
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
+      if (session) fetchProfile(session.user.id)
+      else { setProfile(null); setLoading(false) }
     })
     return () => subscription.unsubscribe()
   }, [])
+
+  const fetchProfile = async (userId) => {
+    const { data } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+    setProfile(data)
+    setLoading(false)
+  }
 
   if (loading) return (
     <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, fontFamily: 'Inter, sans-serif' }}>
@@ -32,6 +46,9 @@ export default function App() {
   )
 
   if (!session) return <Login />
+
+  const isAdmin = profile?.role === 'admin'
+  const merchantId = profile?.merchant_id || null
 
   const navItems = [
     { id: 'dashboard', label: '📊 Performance' },
@@ -51,6 +68,16 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 28, height: 28, background: C.accent, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800, color: '#fff' }}>N</div>
             <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.3px', color: C.text }}>NML & Sllr</span>
+            {!isAdmin && merchantId && (
+              <span style={{ background: C.accent + '22', color: C.accent, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5 }}>
+                Merchant {merchantId}
+              </span>
+            )}
+            {isAdmin && (
+              <span style={{ background: C.blueSoft, color: C.blue, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5 }}>
+                Admin
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 4 }}>
             {navItems.map(item => (
@@ -72,8 +99,8 @@ export default function App() {
         </div>
       </div>
 
-      {activePage === 'dashboard' && <Dashboard user={session.user} />}
-      {activePage === 'ads' && <AdsSpending user={session.user} />}
+      {activePage === 'dashboard' && <Dashboard user={session.user} isAdmin={isAdmin} merchantId={merchantId} />}
+      {activePage === 'ads' && <AdsSpending user={session.user} isAdmin={isAdmin} merchantId={merchantId} />}
     </div>
   )
 }
