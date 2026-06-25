@@ -301,7 +301,7 @@ function SortableTable({ columns, rows, loading }) {
   )
 }
 
-export default function Dashboard({ user }) {
+export default function Dashboard({ user, isAdmin, merchantId }) {
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [rawOrders, setRawOrders] = useState([])
@@ -327,8 +327,8 @@ export default function Dashboard({ user }) {
       const from = dateFrom + 'T00:00:00'
       const to = dateTo + 'T23:59:59'
       const [orders, hly, adsData] = await Promise.all([
-        fetchOrders(from, to),
-        fetchTodayVsYesterday(),
+        fetchOrders(from, to, isAdmin ? null : merchantId),
+        fetchTodayVsYesterday(isAdmin ? null : merchantId),
         supabase.from('ads_spending').select('*')
       ])
 
@@ -550,12 +550,18 @@ export default function Dashboard({ user }) {
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
             <div>
               <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 6 }}>Merchant</div>
+              {isAdmin ? (
               <MultiSelect
                 options={merchantOptions}
                 selected={selectedMerchants}
                 onChange={setSelectedMerchants}
                 placeholder="All merchants"
               />
+              ) : (
+                <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '7px 12px', color: C.accent, fontSize: 13, fontWeight: 600 }}>
+                  Merchant {merchantId}
+                </div>
+              )}
             </div>
             <div>
               <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 6 }}>Product</div>
