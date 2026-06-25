@@ -77,10 +77,12 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
   // Load all existing spend entries
   const loadEntries = useCallback(async () => {
     setLoadingEntries(true)
-    const { data } = await supabase.from('ads_spending').select('*').order('date_from', { ascending: false })
+    let query = supabase.from('ads_spending').select('*').order('date_from', { ascending: false })
+    if (!isAdmin && merchantId) query = query.eq('merchant_id', merchantId)
+    const { data } = await query
     setAllEntries(data || [])
     setLoadingEntries(false)
-  }, [])
+  }, [isAdmin, merchantId])
 
   useEffect(() => { loadMerchants(); loadEntries() }, [loadMerchants, loadEntries])
 
@@ -362,7 +364,12 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
                               color: row.fullyLogged ? C.green : C.accent,
                               padding: '2px 8px', borderRadius: 5, fontWeight: 700, fontSize: 12
                             }}>
-                              {row.fullyLogged ? '✓ Done' : `${row.unloggedDays} days`}
+                              {row.fullyLogged ? '✓ Done' : (() => {
+                                try {
+                                  const days = eachDayOfInterval({ start: parseISO(row.fromDate), end: parseISO(row.toDate) }).length
+                                  return `${days} days`
+                                } catch { return '—' }
+                              })()}
                             </span>
                           </td>
                           {/* Date From */}
