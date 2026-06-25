@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { format, eachDayOfInterval, parseISO, subDays } from 'date-fns'
 
@@ -193,7 +193,7 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
         const rate = await fetchExchangeRate(row.currency, row.fromDate)
         const totalSar = parseFloat(row.amount) * rate
         const [sku, productName] = row.key.split('||')
-        await supabase.from('ads_spending').insert({
+        const { error } = await supabase.from('ads_spending').insert({
           merchant_id: selectedMerchant,
           sku,
           product_name: productName,
@@ -206,6 +206,7 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
           submitted_by: user?.id,
           submitted_by_email: user?.email,
         })
+        if (error) throw new Error(error.message)
       }
       setSubmitSuccess(`✅ Logged ${toSubmit.length} entries successfully!`)
       loadEntries()
@@ -224,7 +225,7 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
   }
 
   const totalSar = allEntries.reduce((s, e) => s + (e.amount_sar || 0), 0)
-  const filledRows = productRows.filter(r => r.amount && parseFloat(r.amount) > 0)
+  const filledRows = useMemo(() => productRows.filter(r => r.amount && parseFloat(r.amount) > 0), [productRows])
 
   return (
     <div style={{ padding: '20px 24px', maxWidth: 1400, margin: '0 auto', color: C.text, fontFamily: "'Inter', sans-serif" }}>
