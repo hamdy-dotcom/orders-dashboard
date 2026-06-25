@@ -7,6 +7,7 @@ import AdsSpending from './pages/AdsSpending'
 const C = {
   bg: '#13151f', surface: '#1c1f2e', card: '#222538', border: '#2e3350',
   accent: '#e8394a', text: '#e2e5f0', muted: '#6b7490', faint: '#343855',
+  blue: '#3b82f6', blueSoft: '#3b82f618', green: '#22c55e',
 }
 
 export default function App() {
