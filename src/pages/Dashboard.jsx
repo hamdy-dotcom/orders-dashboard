@@ -389,7 +389,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
       setLastUpdated(new Date())
     } catch (e) { console.error(e) }
     setLoading(false)
-  }, [dateFrom, dateTo])
+  }, [dateFrom, dateTo, isAdmin, merchantId])
 
   useEffect(() => { load() }, [load])
 
