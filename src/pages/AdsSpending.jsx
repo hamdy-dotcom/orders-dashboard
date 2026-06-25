@@ -1,19 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { format, eachDayOfInterval, parseISO } from 'date-fns'
+import { format, eachDayOfInterval, parseISO, subDays } from 'date-fns'
 
 const C = {
   bg: '#13151f', surface: '#1c1f2e', card: '#222538', border: '#2e3350',
   accent: '#e8394a', accentSoft: '#e8394a18',
   green: '#22c55e', greenSoft: '#22c55e18',
-  orange: '#f97316', blue: '#3b82f6',
+  orange: '#f97316', orangeSoft: '#f9731618',
+  blue: '#3b82f6', blueSoft: '#3b82f618',
   purple: '#a855f7', text: '#e2e5f0', muted: '#6b7490', faint: '#343855',
 }
 
 const fmt = n => Number(n || 0).toLocaleString()
 const fmtSAR = n => `${fmt(Math.round(n || 0))} SAR`
 
-// Historical exchange rates to SAR (approximate, we'll fetch real ones)
 const RATES_TO_SAR = { SAR: 1, EGP: 0.073, USD: 3.75 }
 
 async function fetchExchangeRate(currency, date) {
@@ -27,245 +27,236 @@ async function fetchExchangeRate(currency, date) {
   }
 }
 
-function Input({ label, type = 'text', value, onChange, placeholder, required, min, max }) {
+function Label({ children, required }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
-        {label} {required && <span style={{ color: C.accent }}>*</span>}
-      </label>
-      <input
-        type={type} value={value} onChange={e => onChange(e.target.value)}
-        placeholder={placeholder} required={required} min={min} max={max}
-        style={{
-          background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
-          padding: '9px 12px', color: C.text, fontSize: 13, outline: 'none',
-          width: '100%', boxSizing: 'border-box'
-        }}
-      />
+    <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 6 }}>
+      {children} {required && <span style={{ color: C.accent }}>*</span>}
     </div>
   )
 }
 
-function Select({ label, value, onChange, options, required }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
-        {label} {required && <span style={{ color: C.accent }}>*</span>}
-      </label>
-      <select value={value} onChange={e => onChange(e.target.value)} required={required}
-        style={{
-          background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
-          padding: '9px 12px', color: value ? C.text : C.muted, fontSize: 13,
-          outline: 'none', width: '100%', cursor: 'pointer'
-        }}>
-        {options.map(o => (
-          <option key={o.value} value={o.value} style={{ background: C.surface }}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  )
-}
-
-function Modal({ title, onClose, children }) {
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
-    }}>
-      <div style={{
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 16,
-        padding: 28, width: '100%', maxWidth: 560, maxHeight: '90vh',
-        overflowY: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.5)'
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: C.text }}>{title}</div>
-          <button onClick={onClose} style={{
-            background: 'transparent', border: 'none', color: C.muted,
-            fontSize: 20, cursor: 'pointer', lineHeight: 1
-          }}>✕</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
+function inputStyle(highlight) {
+  return {
+    background: C.bg, border: `1px solid ${highlight ? C.accent : C.border}`,
+    borderRadius: 7, padding: '7px 10px', color: C.text,
+    fontSize: 13, outline: 'none', width: '100%', boxSizing: 'border-box'
+  }
 }
 
 export default function AdsSpending({ user }) {
-  const [entries, setEntries] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [editEntry, setEditEntry] = useState(null)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
+  // Top filters
+  const [overallFrom, setOverallFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
+  const [overallTo, setOverallTo] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [selectedMerchant, setSelectedMerchant] = useState('')
+
+  // Data
   const [merchantOptions, setMerchantOptions] = useState([])
-  const [productOptions, setProductOptions] = useState([])
+  const [productRows, setProductRows] = useState([]) // [{sku, productName, totalOrders, firstDate, lastDate, loggedDates, fromDate, toDate, amount, currency}]
+  const [existingEntries, setExistingEntries] = useState([])
+  const [allEntries, setAllEntries] = useState([])
+  const [loadingRows, setLoadingRows] = useState(false)
+  const [loadingEntries, setLoadingEntries] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState('')
+  const [submitSuccess, setSubmitSuccess] = useState('')
+  const [activeView, setActiveView] = useState('bulk') // 'bulk' | 'log'
 
-  // Form state
-  const [form, setForm] = useState({
-    merchant_id: '', sku: '', product_name: '',
-    date_from: '', date_to: '',
-    total_amount: '', currency: 'SAR', notes: ''
-  })
-  const [ratePreview, setRatePreview] = useState(null)
-
-  const setField = (key, val) => setForm(f => ({ ...f, [key]: val }))
-
-  const loadEntries = useCallback(async () => {
-    setLoading(true)
-    const { data } = await supabase
-      .from('ads_spending')
-      .select('*')
-      .order('date_from', { ascending: false })
-    setEntries(data || [])
-    setLoading(false)
-  }, [])
-
-  const loadOptions = useCallback(async () => {
+  // Load merchants
+  const loadMerchants = useCallback(async () => {
     const { data } = await supabase
       .from('orders')
-      .select('merchant_id, sku, product_name')
-      .limit(5000)
+      .select('merchant_id')
+      .gte('created_at', overallFrom)
+      .lte('created_at', overallTo + 'T23:59:59')
     if (data) {
       const merchants = [...new Set(data.map(o => String(o.merchant_id)).filter(Boolean))].sort()
       setMerchantOptions(merchants)
-      const products = {}
-      data.forEach(o => {
-        if (o.sku) products[o.sku] = o.product_name || o.sku
-      })
-      setProductOptions(Object.entries(products).sort((a, b) => a[1].localeCompare(b[1])))
     }
+  }, [overallFrom, overallTo])
+
+  // Load all existing spend entries
+  const loadEntries = useCallback(async () => {
+    setLoadingEntries(true)
+    const { data } = await supabase.from('ads_spending').select('*').order('date_from', { ascending: false })
+    setAllEntries(data || [])
+    setLoadingEntries(false)
   }, [])
 
-  useEffect(() => { loadEntries(); loadOptions() }, [loadEntries, loadOptions])
+  useEffect(() => { loadMerchants(); loadEntries() }, [loadMerchants, loadEntries])
 
-  // Preview exchange rate when currency/date changes
+  // When merchant + date range selected, load product rows
   useEffect(() => {
-    if (form.currency !== 'SAR' && form.date_from) {
-      fetchExchangeRate(form.currency, form.date_from).then(rate => {
-        setRatePreview(rate)
-      })
-    } else {
-      setRatePreview(null)
+    if (!selectedMerchant || !overallFrom || !overallTo) {
+      setProductRows([])
+      return
     }
-  }, [form.currency, form.date_from])
+    loadProductRows()
+  }, [selectedMerchant, overallFrom, overallTo])
 
-  // Auto-fill product name when SKU selected
-  const handleSkuChange = val => {
-    const found = productOptions.find(([sku]) => sku === val)
-    setField('sku', val)
-    if (found) setField('product_name', found[1])
+  const loadProductRows = async () => {
+    setLoadingRows(true)
+    setProductRows([])
+
+    // Fetch orders for this merchant in date range
+    let allOrders = []
+    let page = 0
+    while (true) {
+      const { data } = await supabase
+        .from('orders')
+        .select('sku, product_name, created_at')
+        .eq('merchant_id', selectedMerchant)
+        .gte('created_at', overallFrom)
+        .lte('created_at', overallTo + 'T23:59:59')
+        .range(page * 1000, (page + 1) * 1000 - 1)
+      if (!data || data.length === 0) break
+      allOrders = allOrders.concat(data)
+      if (data.length < 1000) break
+      page++
+    }
+
+    // Group by product
+    const byProduct = {}
+    for (const o of allOrders) {
+      const sku = o.sku || 'unknown'
+      const name = o.product_name || sku
+      const key = `${sku}||${name}`
+      if (!byProduct[key]) byProduct[key] = { sku, productName: name, dates: [] }
+      const d = o.created_at?.slice(0, 10)
+      if (d) byProduct[key].dates.push(d)
+    }
+
+    // Fetch existing spend entries for this merchant
+    const { data: spendData } = await supabase
+      .from('ads_spending')
+      .select('*')
+      .eq('merchant_id', selectedMerchant)
+
+    // Build logged dates per product
+    const loggedByProduct = {}
+    for (const entry of (spendData || [])) {
+      const key = `${entry.sku}||${entry.product_name}`
+      if (!loggedByProduct[key]) loggedByProduct[key] = new Set()
+      try {
+        const days = eachDayOfInterval({ start: parseISO(entry.date_from), end: parseISO(entry.date_to) })
+        days.forEach(d => loggedByProduct[key].add(format(d, 'yyyy-MM-dd')))
+      } catch {}
+    }
+
+    // Build rows
+    const rows = Object.entries(byProduct).map(([key, prod]) => {
+      const allDates = [...new Set(prod.dates)].sort()
+      const loggedDates = loggedByProduct[key] || new Set()
+
+      // Only dates within overall range that are NOT logged
+      const unloggedDates = allDates.filter(d =>
+        d >= overallFrom && d <= overallTo && !loggedDates.has(d)
+      )
+
+      const fullyLogged = unloggedDates.length === 0
+      const fromDate = unloggedDates.length > 0 ? unloggedDates[0] : allDates[0] || overallFrom
+      const toDate = unloggedDates.length > 0 ? unloggedDates[unloggedDates.length - 1] : allDates[allDates.length - 1] || overallTo
+
+      return {
+        key,
+        sku: prod.sku,
+        productName: prod.productName,
+        totalOrders: prod.dates.length,
+        fromDate,
+        toDate,
+        fullyLogged,
+        unloggedDays: unloggedDates.length,
+        amount: '',
+        currency: 'SAR',
+      }
+    }).sort((a, b) => b.totalOrders - a.totalOrders)
+
+    setProductRows(rows)
+    setLoadingRows(false)
   }
 
-  const openAdd = () => {
-    setForm({ merchant_id: '', sku: '', product_name: '', date_from: '', date_to: '', total_amount: '', currency: 'SAR', notes: '' })
-    setEditEntry(null)
-    setError('')
-    setShowForm(true)
+  const updateRow = (key, field, value) => {
+    setProductRows(rows => rows.map(r => r.key === key ? { ...r, [field]: value } : r))
   }
 
-  const openEdit = entry => {
-    setForm({
-      merchant_id: entry.merchant_id,
-      sku: entry.sku,
-      product_name: entry.product_name || '',
-      date_from: entry.date_from,
-      date_to: entry.date_to,
-      total_amount: String(entry.total_amount),
-      currency: entry.currency,
-      notes: entry.notes || ''
-    })
-    setEditEntry(entry)
-    setError('')
-    setShowForm(true)
+  const handleBulkSubmit = async () => {
+    const toSubmit = productRows.filter(r => r.amount && parseFloat(r.amount) > 0 && !r.fullyLogged)
+    if (toSubmit.length === 0) {
+      setSubmitError('No amounts entered!')
+      return
+    }
+    setSubmitting(true)
+    setSubmitError('')
+    setSubmitSuccess('')
+
+    try {
+      for (const row of toSubmit) {
+        const rate = await fetchExchangeRate(row.currency, row.fromDate)
+        const totalSar = parseFloat(row.amount) * rate
+        const [sku, productName] = row.key.split('||')
+        await supabase.from('ads_spending').insert({
+          merchant_id: selectedMerchant,
+          sku,
+          product_name: productName,
+          date_from: row.fromDate,
+          date_to: row.toDate,
+          total_amount: parseFloat(row.amount),
+          currency: row.currency,
+          amount_sar: Math.round(totalSar * 100) / 100,
+          exchange_rate: rate,
+          submitted_by: user?.id,
+          submitted_by_email: user?.email,
+        })
+      }
+      setSubmitSuccess(`✅ Logged ${toSubmit.length} entries successfully!`)
+      loadEntries()
+      loadProductRows()
+    } catch (e) {
+      setSubmitError(e.message || 'Error submitting')
+    }
+    setSubmitting(false)
   }
 
   const handleDelete = async id => {
     if (!window.confirm('Delete this entry?')) return
     await supabase.from('ads_spending').delete().eq('id', id)
     loadEntries()
+    if (selectedMerchant) loadProductRows()
   }
 
-  const handleSubmit = async e => {
-    e.preventDefault()
-    setSubmitting(true)
-    setError('')
-
-    try {
-      const dateFrom = parseISO(form.date_from)
-      const dateTo = parseISO(form.date_to)
-      const days = eachDayOfInterval({ start: dateFrom, end: dateTo }).length
-      const rate = await fetchExchangeRate(form.currency, form.date_from)
-      const totalSar = parseFloat(form.total_amount) * rate
-
-      const payload = {
-        merchant_id: form.merchant_id,
-        sku: form.sku,
-        product_name: form.product_name,
-        date_from: form.date_from,
-        date_to: form.date_to,
-        total_amount: parseFloat(form.total_amount),
-        currency: form.currency,
-        amount_sar: Math.round(totalSar * 100) / 100,
-        exchange_rate: rate,
-        notes: form.notes,
-        submitted_by: user?.id,
-        submitted_by_email: user?.email,
-      }
-
-      if (editEntry) {
-        await supabase.from('ads_spending').update(payload).eq('id', editEntry.id)
-      } else {
-        await supabase.from('ads_spending').insert(payload)
-      }
-
-      setShowForm(false)
-      loadEntries()
-    } catch (err) {
-      setError(err.message || 'Something went wrong')
-    }
-    setSubmitting(false)
-  }
-
-  // Summary stats
-  const totalSar = entries.reduce((s, e) => s + (e.amount_sar || 0), 0)
-  const totalEntries = entries.length
-
-  // Daily breakdown for a given entry
-  const getDailyAmount = entry => {
-    const days = eachDayOfInterval({ start: parseISO(entry.date_from), end: parseISO(entry.date_to) }).length
-    return Math.round((entry.amount_sar / days) * 100) / 100
-  }
+  const totalSar = allEntries.reduce((s, e) => s + (e.amount_sar || 0), 0)
+  const filledRows = productRows.filter(r => r.amount && parseFloat(r.amount) > 0)
 
   return (
-    <div style={{ padding: '20px 24px', maxWidth: 1400, margin: '0 auto' }}>
+    <div style={{ padding: '20px 24px', maxWidth: 1400, margin: '0 auto', color: C.text, fontFamily: "'Inter', sans-serif" }}>
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 18, color: C.text }}>Ads Spending Log</div>
-          <div style={{ color: C.muted, fontSize: 13, marginTop: 3 }}>
-            Log ad spend by merchant & product — auto-converts to SAR
-          </div>
+          <div style={{ fontWeight: 700, fontSize: 18, color: C.text }}>Ads Spending</div>
+          <div style={{ color: C.muted, fontSize: 13, marginTop: 3 }}>Log ad spend by merchant & product</div>
         </div>
-        <button onClick={openAdd} style={{
-          background: C.accent, color: '#fff', border: 'none',
-          borderRadius: 9, padding: '10px 20px', fontSize: 14,
-          cursor: 'pointer', fontWeight: 700
-        }}>+ Log Spend</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {['bulk', 'log'].map(v => (
+            <button key={v} onClick={() => setActiveView(v)} style={{
+              background: activeView === v ? C.accent : C.card,
+              color: activeView === v ? '#fff' : C.muted,
+              border: `1px solid ${activeView === v ? C.accent : C.border}`,
+              borderRadius: 8, padding: '8px 16px', fontSize: 13,
+              cursor: 'pointer', fontWeight: 600
+            }}>
+              {v === 'bulk' ? '📋 Bulk Entry' : '📜 All Entries'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Summary Cards */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
         {[
-          { label: 'Total Logged Entries', value: fmt(totalEntries), accent: C.blue },
+          { label: 'Total Entries', value: fmt(allEntries.length), accent: C.blue },
           { label: 'Total Ads Spent (SAR)', value: fmtSAR(totalSar), accent: C.accent },
         ].map(card => (
-          <div key={card.label} style={{
-            background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
-            padding: '16px 20px', flex: 1, position: 'relative', overflow: 'hidden'
-          }}>
+          <div key={card.label} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px 20px', flex: 1, position: 'relative', overflow: 'hidden' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: card.accent }} />
             <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>{card.label}</div>
             <div style={{ color: C.text, fontSize: 24, fontWeight: 800, marginTop: 6 }}>{card.value}</div>
@@ -273,189 +264,265 @@ export default function AdsSpending({ user }) {
         ))}
       </div>
 
-      {/* Table */}
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
-        <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>Spending Entries</div>
-          <div style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Daily average = Total ÷ Days in range</div>
-        </div>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: 'center', color: C.muted }}>Loading...</div>
-        ) : entries.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: C.muted }}>
-            No entries yet — click "Log Spend" to add the first one!
+      {/* BULK ENTRY VIEW */}
+      {activeView === 'bulk' && (
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+
+          {/* Filters */}
+          <div style={{ padding: '16px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div>
+              <Label>Overall Date Range</Label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="date" value={overallFrom} onChange={e => setOverallFrom(e.target.value)} style={inputStyle(false)} />
+                <span style={{ color: C.muted }}>→</span>
+                <input type="date" value={overallTo} onChange={e => setOverallTo(e.target.value)} style={inputStyle(false)} />
+              </div>
+            </div>
+            <div style={{ minWidth: 200 }}>
+              <Label required>Merchant</Label>
+              <select value={selectedMerchant} onChange={e => setSelectedMerchant(e.target.value)}
+                style={{ ...inputStyle(!!selectedMerchant), cursor: 'pointer' }}>
+                <option value="">— Select Merchant —</option>
+                {merchantOptions.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            {selectedMerchant && productRows.length > 0 && (
+              <div style={{ color: C.muted, fontSize: 13, marginLeft: 'auto', alignSelf: 'center' }}>
+                {productRows.filter(r => !r.fullyLogged).length} products need spend logging
+              </div>
+            )}
           </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr>
-                  {['Merchant', 'SKU', 'Product', 'Date From', 'Date To', 'Days', 'Amount', 'Currency', 'Rate', 'Total SAR', 'Daily SAR', 'Submitted By', 'Notes', ''].map(h => (
-                    <th key={h} style={{
-                      padding: '10px 14px', textAlign: 'left', color: C.muted,
-                      fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em',
-                      borderBottom: `1px solid ${C.border}`, background: C.surface,
-                      whiteSpace: 'nowrap', fontWeight: 600
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map(entry => {
-                  const days = eachDayOfInterval({ start: parseISO(entry.date_from), end: parseISO(entry.date_to) }).length
-                  const dailySar = Math.round((entry.amount_sar / days) * 10) / 10
-                  return (
-                    <tr key={entry.id} style={{ borderBottom: `1px solid ${C.border}` }}
-                      onMouseEnter={e => e.currentTarget.style.background = C.surface}
-                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                      <td style={{ padding: '10px 14px', color: C.text, whiteSpace: 'nowrap' }}>{entry.merchant_id}</td>
-                      <td style={{ padding: '10px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{entry.sku}</td>
-                      <td style={{ padding: '10px 14px', color: C.text, maxWidth: 200 }}>
-                        <span title={entry.product_name}>{entry.product_name?.slice(0, 30)}{entry.product_name?.length > 30 ? '…' : ''}</span>
-                      </td>
-                      <td style={{ padding: '10px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{entry.date_from}</td>
-                      <td style={{ padding: '10px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{entry.date_to}</td>
-                      <td style={{ padding: '10px 14px', color: C.text, textAlign: 'center' }}>{days}</td>
-                      <td style={{ padding: '10px 14px', color: C.text, whiteSpace: 'nowrap' }}>{fmt(entry.total_amount)}</td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{
-                          background: entry.currency === 'SAR' ? C.greenSoft : entry.currency === 'USD' ? C.blueSoft : C.accentSoft,
-                          color: entry.currency === 'SAR' ? C.green : entry.currency === 'USD' ? C.blue : C.accent,
-                          padding: '2px 8px', borderRadius: 5, fontSize: 11, fontWeight: 700
-                        }}>{entry.currency}</span>
-                      </td>
-                      <td style={{ padding: '10px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{entry.exchange_rate?.toFixed(4)}</td>
-                      <td style={{ padding: '10px 14px', color: C.green, fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtSAR(entry.amount_sar)}</td>
-                      <td style={{ padding: '10px 14px', color: C.orange, whiteSpace: 'nowrap' }}>{fmt(dailySar)} SAR/day</td>
-                      <td style={{ padding: '10px 14px', color: C.muted, whiteSpace: 'nowrap', fontSize: 12 }}>{entry.submitted_by_email?.split('@')[0]}</td>
-                      <td style={{ padding: '10px 14px', color: C.muted, fontSize: 12, maxWidth: 150 }}>
-                        <span title={entry.notes}>{entry.notes?.slice(0, 20)}{entry.notes?.length > 20 ? '…' : ''}</span>
-                      </td>
-                      <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
-                        <button onClick={() => openEdit(entry)} style={{
-                          background: 'transparent', color: C.blue, border: `1px solid ${C.border}`,
-                          borderRadius: 5, padding: '3px 10px', fontSize: 12, cursor: 'pointer', marginRight: 6
-                        }}>Edit</button>
-                        <button onClick={() => handleDelete(entry.id)} style={{
-                          background: 'transparent', color: C.accent, border: `1px solid ${C.border}`,
-                          borderRadius: 5, padding: '3px 10px', fontSize: 12, cursor: 'pointer'
-                        }}>Delete</button>
-                      </td>
+
+          {/* Product Rows */}
+          {!selectedMerchant ? (
+            <div style={{ padding: 48, textAlign: 'center', color: C.muted }}>
+              Select a merchant to see their products
+            </div>
+          ) : loadingRows ? (
+            <div style={{ padding: 48, textAlign: 'center', color: C.muted }}>Loading products...</div>
+          ) : productRows.length === 0 ? (
+            <div style={{ padding: 48, textAlign: 'center', color: C.muted }}>No orders found for this merchant in the selected date range</div>
+          ) : (
+            <>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      {['Product', 'SKU', 'Orders', 'Unlogged Days', 'Date From', 'Date To', 'Amount Spent', 'Currency', 'Daily Avg', 'Status'].map(h => (
+                        <th key={h} style={{
+                          padding: '10px 14px', textAlign: 'left', color: C.muted,
+                          fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em',
+                          borderBottom: `1px solid ${C.border}`, background: C.surface,
+                          whiteSpace: 'nowrap', fontWeight: 600
+                        }}>{h}</th>
+                      ))}
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                  </thead>
+                  <tbody>
+                    {productRows.map(row => {
+                      const dailyAvg = row.amount && parseFloat(row.amount) > 0
+                        ? (() => {
+                          try {
+                            const days = eachDayOfInterval({ start: parseISO(row.fromDate), end: parseISO(row.toDate) }).length
+                            return Math.round(parseFloat(row.amount) / days)
+                          } catch { return 0 }
+                        })() : 0
 
-      {/* Form Modal */}
-      {showForm && (
-        <Modal title={editEntry ? 'Edit Spend Entry' : 'Log Ad Spend'} onClose={() => setShowForm(false)}>
-          <form onSubmit={handleSubmit}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-              <Select
-                label="Merchant"
-                value={form.merchant_id}
-                onChange={v => setField('merchant_id', v)}
-                required
-                options={[{ value: '', label: '— Select Merchant —' }, ...merchantOptions.map(m => ({ value: m, label: m }))]}
-              />
-              <Select
-                label="Product SKU"
-                value={form.sku}
-                onChange={handleSkuChange}
-                required
-                options={[{ value: '', label: '— Select SKU —' }, ...productOptions.map(([sku, name]) => ({ value: sku, label: `${sku} · ${name?.slice(0, 30)}` }))]}
-              />
-            </div>
-
-            {form.product_name && (
-              <div style={{ background: C.surface, borderRadius: 8, padding: '10px 14px', marginBottom: 16, color: C.muted, fontSize: 13 }}>
-                📦 {form.product_name}
+                      return (
+                        <tr key={row.key} style={{
+                          borderBottom: `1px solid ${C.border}`,
+                          opacity: row.fullyLogged ? 0.5 : 1,
+                          background: row.fullyLogged ? C.surface + '80' : 'transparent'
+                        }}>
+                          {/* Product Name */}
+                          <td style={{ padding: '12px 14px', color: C.text, maxWidth: 220 }}>
+                            <span title={row.productName} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {row.productName?.slice(0, 40)}{row.productName?.length > 40 ? '…' : ''}
+                            </span>
+                          </td>
+                          {/* SKU */}
+                          <td style={{ padding: '12px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{row.sku}</td>
+                          {/* Orders */}
+                          <td style={{ padding: '12px 14px', color: C.text, textAlign: 'right' }}>
+                            <span style={{ background: C.blueSoft, color: C.blue, padding: '2px 8px', borderRadius: 5, fontWeight: 700 }}>
+                              {fmt(row.totalOrders)}
+                            </span>
+                          </td>
+                          {/* Unlogged Days */}
+                          <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                            <span style={{
+                              background: row.fullyLogged ? C.greenSoft : C.accentSoft,
+                              color: row.fullyLogged ? C.green : C.accent,
+                              padding: '2px 8px', borderRadius: 5, fontWeight: 700, fontSize: 12
+                            }}>
+                              {row.fullyLogged ? '✓ Done' : `${row.unloggedDays} days`}
+                            </span>
+                          </td>
+                          {/* Date From */}
+                          <td style={{ padding: '12px 14px' }}>
+                            <input type="date" value={row.fromDate}
+                              onChange={e => updateRow(row.key, 'fromDate', e.target.value)}
+                              disabled={row.fullyLogged}
+                              style={{ ...inputStyle(false), width: 140, opacity: row.fullyLogged ? 0.4 : 1 }}
+                            />
+                          </td>
+                          {/* Date To */}
+                          <td style={{ padding: '12px 14px' }}>
+                            <input type="date" value={row.toDate}
+                              onChange={e => updateRow(row.key, 'toDate', e.target.value)}
+                              disabled={row.fullyLogged}
+                              style={{ ...inputStyle(false), width: 140, opacity: row.fullyLogged ? 0.4 : 1 }}
+                            />
+                          </td>
+                          {/* Amount */}
+                          <td style={{ padding: '12px 14px' }}>
+                            <input type="number" value={row.amount}
+                              onChange={e => updateRow(row.key, 'amount', e.target.value)}
+                              disabled={row.fullyLogged}
+                              placeholder="0"
+                              style={{ ...inputStyle(!!row.amount && parseFloat(row.amount) > 0), width: 120, opacity: row.fullyLogged ? 0.4 : 1 }}
+                            />
+                          </td>
+                          {/* Currency */}
+                          <td style={{ padding: '12px 14px' }}>
+                            <select value={row.currency}
+                              onChange={e => updateRow(row.key, 'currency', e.target.value)}
+                              disabled={row.fullyLogged}
+                              style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '7px 10px', color: C.text, fontSize: 13, outline: 'none', cursor: 'pointer', opacity: row.fullyLogged ? 0.4 : 1 }}>
+                              <option value="SAR">🇸🇦 SAR</option>
+                              <option value="EGP">🇪🇬 EGP</option>
+                              <option value="USD">🇺🇸 USD</option>
+                            </select>
+                          </td>
+                          {/* Daily Avg */}
+                          <td style={{ padding: '12px 14px', color: C.orange, whiteSpace: 'nowrap', fontWeight: 600 }}>
+                            {dailyAvg > 0 ? `${fmt(dailyAvg)}/day` : '—'}
+                          </td>
+                          {/* Status */}
+                          <td style={{ padding: '12px 14px' }}>
+                            {row.fullyLogged ? (
+                              <span style={{ color: C.green, fontSize: 12 }}>✓ Logged</span>
+                            ) : row.amount && parseFloat(row.amount) > 0 ? (
+                              <span style={{ color: C.accent, fontSize: 12 }}>● Ready</span>
+                            ) : (
+                              <span style={{ color: C.faint, fontSize: 12 }}>○ Empty</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
-            )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-              <Input label="Date From" type="date" value={form.date_from} onChange={v => setField('date_from', v)} required />
-              <Input label="Date To" type="date" value={form.date_to} onChange={v => setField('date_to', v)} required />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 16 }}>
-              <Input label="Total Amount Spent" type="number" value={form.total_amount} onChange={v => setField('total_amount', v)} placeholder="e.g. 5000" required min="0" />
-              <Select
-                label="Currency"
-                value={form.currency}
-                onChange={v => setField('currency', v)}
-                options={[
-                  { value: 'SAR', label: '🇸🇦 SAR' },
-                  { value: 'EGP', label: '🇪🇬 EGP' },
-                  { value: 'USD', label: '🇺🇸 USD' },
-                ]}
-              />
-            </div>
-
-            {/* Rate Preview */}
-            {form.currency !== 'SAR' && ratePreview && form.total_amount && (
+              {/* Submit Bar */}
               <div style={{
-                background: C.greenSoft, border: `1px solid ${C.green}40`,
-                borderRadius: 8, padding: '10px 14px', marginBottom: 16,
-                color: C.green, fontSize: 13
+                padding: '16px 20px', borderTop: `1px solid ${C.border}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16
               }}>
-                💱 {form.currency} → SAR rate on {form.date_from}: <strong>{ratePreview.toFixed(4)}</strong>
-                {form.total_amount && ` · Total: ${fmtSAR(parseFloat(form.total_amount) * ratePreview)}`}
-                {form.date_from && form.date_to && (() => {
-                  try {
-                    const days = eachDayOfInterval({ start: parseISO(form.date_from), end: parseISO(form.date_to) }).length
-                    return ` · ${days} days · ${fmt(Math.round(parseFloat(form.total_amount) * ratePreview / days))} SAR/day`
-                  } catch { return '' }
-                })()}
+                <div style={{ fontSize: 13, color: C.muted }}>
+                  {filledRows.length > 0 ? (
+                    <span style={{ color: C.text }}>
+                      <strong style={{ color: C.accent }}>{filledRows.length}</strong> product{filledRows.length > 1 ? 's' : ''} ready to log
+                    </span>
+                  ) : 'Enter amounts for products to log spend'}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {submitError && <span style={{ color: C.accent, fontSize: 13 }}>{submitError}</span>}
+                  {submitSuccess && <span style={{ color: C.green, fontSize: 13 }}>{submitSuccess}</span>}
+                  <button
+                    onClick={handleBulkSubmit}
+                    disabled={submitting || filledRows.length === 0}
+                    style={{
+                      background: filledRows.length === 0 ? C.faint : C.accent,
+                      color: '#fff', border: 'none', borderRadius: 8,
+                      padding: '10px 24px', fontSize: 14, cursor: filledRows.length === 0 ? 'not-allowed' : 'pointer',
+                      fontWeight: 700
+                    }}>
+                    {submitting ? 'Saving...' : `Log ${filledRows.length || ''} Entries`}
+                  </button>
+                </div>
               </div>
-            )}
-
-            {/* Days preview */}
-            {form.date_from && form.date_to && form.currency === 'SAR' && form.total_amount && (() => {
-              try {
-                const days = eachDayOfInterval({ start: parseISO(form.date_from), end: parseISO(form.date_to) }).length
-                return (
-                  <div style={{
-                    background: C.blueSoft, border: `1px solid ${C.blue}40`,
-                    borderRadius: 8, padding: '10px 14px', marginBottom: 16,
-                    color: C.blue, fontSize: 13
-                  }}>
-                    📅 {days} days · <strong>{fmt(Math.round(parseFloat(form.total_amount) / days))} SAR/day</strong>
-                  </div>
-                )
-              } catch { return null }
-            })()}
-
-            <div style={{ marginBottom: 20 }}>
-              <Input label="Notes (optional)" value={form.notes} onChange={v => setField('notes', v)} placeholder="Campaign name, product launch, etc." />
-            </div>
-
-            {error && (
-              <div style={{ background: '#2d1b1b', border: '1px solid #5a2020', borderRadius: 8, padding: '10px 14px', color: '#f87171', fontSize: 13, marginBottom: 16 }}>
-                {error}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => setShowForm(false)} style={{
-                background: 'transparent', color: C.muted, border: `1px solid ${C.border}`,
-                borderRadius: 8, padding: '10px 20px', fontSize: 14, cursor: 'pointer'
-              }}>Cancel</button>
-              <button type="submit" disabled={submitting} style={{
-                background: submitting ? C.faint : C.accent, color: '#fff', border: 'none',
-                borderRadius: 8, padding: '10px 24px', fontSize: 14,
-                cursor: submitting ? 'not-allowed' : 'pointer', fontWeight: 700
-              }}>
-                {submitting ? 'Saving...' : editEntry ? 'Update Entry' : 'Log Spend'}
-              </button>
-            </div>
-          </form>
-        </Modal>
+            </>
+          )}
+        </div>
       )}
+
+      {/* ALL ENTRIES VIEW */}
+      {activeView === 'log' && (
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>All Spending Entries</div>
+            <div style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Daily average = Total ÷ Days in range</div>
+          </div>
+          {loadingEntries ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.muted }}>Loading...</div>
+          ) : allEntries.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.muted }}>No entries yet</div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    {['Merchant', 'SKU', 'Product', 'Date From', 'Date To', 'Days', 'Amount', 'CCY', 'Total SAR', 'Daily SAR', 'By', ''].map(h => (
+                      <th key={h} style={{
+                        padding: '10px 14px', textAlign: 'left', color: C.muted,
+                        fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em',
+                        borderBottom: `1px solid ${C.border}`, background: C.surface,
+                        whiteSpace: 'nowrap', fontWeight: 600
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {allEntries.map(entry => {
+                    let days = 1
+                    try { days = eachDayOfInterval({ start: parseISO(entry.date_from), end: parseISO(entry.date_to) }).length } catch {}
+                    const dailySar = Math.round((entry.amount_sar / days) * 10) / 10
+                    return (
+                      <tr key={entry.id} style={{ borderBottom: `1px solid ${C.border}` }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.surface}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                        <td style={{ padding: '10px 14px', color: C.text, whiteSpace: 'nowrap' }}>{entry.merchant_id}</td>
+                        <td style={{ padding: '10px 14px', color: C.muted, whiteSpace: 'nowrap', fontSize: 12 }}>{entry.sku}</td>
+                        <td style={{ padding: '10px 14px', color: C.text, maxWidth: 180 }}>
+                          <span title={entry.product_name}>{entry.product_name?.slice(0, 28)}{entry.product_name?.length > 28 ? '…' : ''}</span>
+                        </td>
+                        <td style={{ padding: '10px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{entry.date_from}</td>
+                        <td style={{ padding: '10px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{entry.date_to}</td>
+                        <td style={{ padding: '10px 14px', color: C.text, textAlign: 'right' }}>{days}</td>
+                        <td style={{ padding: '10px 14px', color: C.text, whiteSpace: 'nowrap' }}>{fmt(entry.total_amount)}</td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{
+                            background: entry.currency === 'SAR' ? C.greenSoft : entry.currency === 'USD' ? C.blueSoft : C.accentSoft,
+                            color: entry.currency === 'SAR' ? C.green : entry.currency === 'USD' ? C.blue : C.accent,
+                            padding: '2px 7px', borderRadius: 5, fontSize: 11, fontWeight: 700
+                          }}>{entry.currency}</span>
+                        </td>
+                        <td style={{ padding: '10px 14px', color: C.green, fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtSAR(entry.amount_sar)}</td>
+                        <td style={{ padding: '10px 14px', color: C.orange, whiteSpace: 'nowrap' }}>{fmt(dailySar)}/day</td>
+                        <td style={{ padding: '10px 14px', color: C.muted, fontSize: 12, whiteSpace: 'nowrap' }}>{entry.submitted_by_email?.split('@')[0]}</td>
+                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
+                          <button onClick={() => handleDelete(entry.id)} style={{
+                            background: 'transparent', color: C.accent, border: `1px solid ${C.border}`,
+                            borderRadius: 5, padding: '3px 10px', fontSize: 12, cursor: 'pointer'
+                          }}>Delete</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      <style>{`
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+        input[type="number"]::-webkit-inner-spin-button { opacity: 0.3; }
+        select option { background: #1c1f2e; }
+      `}</style>
     </div>
   )
 }
