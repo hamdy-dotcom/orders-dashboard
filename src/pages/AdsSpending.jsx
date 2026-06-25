@@ -43,11 +43,11 @@ function inputStyle(highlight) {
   }
 }
 
-export default function AdsSpending({ user }) {
+export default function AdsSpending({ user, isAdmin, merchantId }) {
   // Top filters
   const [overallFrom, setOverallFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
   const [overallTo, setOverallTo] = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [selectedMerchant, setSelectedMerchant] = useState('')
+  const [selectedMerchant, setSelectedMerchant] = useState(isAdmin ? '' : (merchantId || ''))
 
   // Data
   const [merchantOptions, setMerchantOptions] = useState([])
@@ -280,11 +280,17 @@ export default function AdsSpending({ user }) {
             </div>
             <div style={{ minWidth: 200 }}>
               <Label required>Merchant</Label>
+              {isAdmin ? (
               <select value={selectedMerchant} onChange={e => setSelectedMerchant(e.target.value)}
                 style={{ ...inputStyle(!!selectedMerchant), cursor: 'pointer' }}>
                 <option value="">— Select Merchant —</option>
                 {merchantOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
+              ) : (
+                <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '7px 10px', color: C.accent, fontSize: 13, fontWeight: 600 }}>
+                  Merchant {merchantId}
+                </div>
+              )}
             </div>
             {selectedMerchant && productRows.length > 0 && (
               <div style={{ color: C.muted, fontSize: 13, marginLeft: 'auto', alignSelf: 'center' }}>
