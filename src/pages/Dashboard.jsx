@@ -326,10 +326,13 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
     try {
       const from = dateFrom + 'T00:00:00'
       const to = dateTo + 'T23:59:59'
+      let adsQuery = supabase.from('ads_spending').select('*')
+      if (!isAdmin && merchantId) adsQuery = adsQuery.eq('merchant_id', merchantId)
+
       const [orders, hly, adsData] = await Promise.all([
         fetchOrders(from, to, isAdmin ? null : merchantId),
         fetchTodayVsYesterday(isAdmin ? null : merchantId),
-        supabase.from('ads_spending').select('*')
+        adsQuery
       ])
 
       // Build adsMap: key = sku||productName or merchantId, value = SAR spent in date range
