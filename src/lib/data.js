@@ -158,21 +158,24 @@ export function computeSkuPerformance(orders) {
 // Compute merchant × product matches from filtered orders
 export function calcRoiMetrics(orders, adsSpent = 0) {
   const delivered = orders.filter(o => o.order_status === 'Delivered')
+  const totalOrders = orders.length
 
   const deliveredCount = delivered.length
   const collected = delivered.reduce((s, o) => s + (parseFloat(String(o.cod || 0).replace(/[^\d.]/g, '')) || 0), 0)
   const cogs = delivered.reduce((s, o) => {
     const cost = parseFloat(o.vendor_cost_vat_inc) || 0
-    const pcs = parseFloat(o.pcs) || 1
+    const pcs = parseFloat(o.pcs) || 0
     return s + cost * pcs
   }, 0)
   const operationCost = deliveredCount * 30
   const netProfit = collected - adsSpent - operationCost
   const roi = (cogs + adsSpent) > 0 ? (netProfit / (cogs + adsSpent)) * 100 : 0
   const dlvdAsp = deliveredCount > 0 ? collected / deliveredCount : 0
+  const cpa = totalOrders > 0 && adsSpent > 0 ? adsSpent / totalOrders : 0
 
   return {
     deliveredCount,
+    totalOrders,
     collected: Math.round(collected),
     cogs: Math.round(cogs),
     operationCost: Math.round(operationCost),
@@ -180,6 +183,7 @@ export function calcRoiMetrics(orders, adsSpent = 0) {
     netProfit: Math.round(netProfit),
     roi: Math.round(roi * 10) / 10,
     dlvdAsp: Math.round(dlvdAsp * 10) / 10,
+    cpa: Math.round(cpa * 10) / 10,
   }
 }
 
