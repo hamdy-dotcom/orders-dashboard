@@ -321,7 +321,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   const [dispatchFrom, setDispatchFrom] = useState('')
   const [dispatchTo, setDispatchTo] = useState('')
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (resetFilters = false) => {
     setLoading(true)
     try {
       const from = dateFrom + 'T00:00:00'
@@ -335,27 +335,21 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
         adsQuery
       ])
 
-      // Build adsMap: key = sku||productName or merchantId, value = SAR spent in date range
+      // Build adsMap
       const map = {}
       if (adsData.data) {
         for (const entry of adsData.data) {
           const entryFrom = entry.date_from
           const entryTo = entry.date_to
-          // Check overlap with current date range
           if (entryTo < dateFrom || entryFrom > dateTo) continue
-          // Calculate overlapping days
           const overlapFrom = entryFrom > dateFrom ? entryFrom : dateFrom
           const overlapTo = entryTo < dateTo ? entryTo : dateTo
           const totalDays = (new Date(entryTo) - new Date(entryFrom)) / 86400000 + 1
           const overlapDays = (new Date(overlapTo) - new Date(overlapFrom)) / 86400000 + 1
           const dailySar = (entry.amount_sar || 0) / totalDays
           const overlapSar = dailySar * overlapDays
-
-          // By product key
           const productKey = `${entry.sku}||${entry.product_name}`
           map[productKey] = (map[productKey] || 0) + overlapSar
-
-          // By merchant key
           const merchantKey = entry.merchant_id
           map[merchantKey] = (map[merchantKey] || 0) + overlapSar
         }
@@ -382,19 +376,23 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
         }
       }
 
-      // Reset filters on new date range
-      setSelectedMerchants([])
-      setSelectedProducts([])
-      setDispatchFrom('')
-      setDispatchTo('')
-      setExcludeLast10(false)
+      // Only reset filters when explicitly asked (date range change), not on refresh
+      if (resetFilters) {
+        setSelectedMerchants([])
+        setSelectedProducts([])
+        setDispatchFrom('')
+        setDispatchTo('')
+        setExcludeLast10(false)
+      }
 
       setLastUpdated(new Date())
     } catch (e) { console.error(e) }
     setLoading(false)
   }, [dateFrom, dateTo, isAdmin, merchantId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(true) }, [dateFrom, dateTo, isAdmin, merchantId])
+
+  const handleRefresh = () => load(false)
 
   // Unique options from raw orders
   const merchantOptions = useMemo(() =>
@@ -516,7 +514,29 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   return (
     <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: "'Inter', -apple-system, sans-serif", fontSize: 14 }}>
 
-      <div style={{ padding: '20px 24px', maxWidth: 1600, margin: '0 auto' }}>
+      <div style={{ padding: '20px 24px', maxWidth: 1600, margin: '0 auto', position: 'relative' }}>
+        {/* Loading overlay */}
+        {loading && (
+          <div style={{
+            position: 'fixed', top: 54, left: 0, right: 0, bottom: 0,
+            background: 'rgba(19,21,31,0.6)', zIndex: 50,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            backdropFilter: 'blur(2px)'
+          }}>
+            <div style={{
+              background: C.card, border: `1px solid ${C.border}`,
+              borderRadius: 12, padding: '20px 32px',
+              display: 'flex', alignItems: 'center', gap: 14, color: C.text
+            }}>
+              <div style={{
+                width: 20, height: 20, borderRadius: '50%',
+                border: `2px solid ${C.faint}`, borderTopColor: C.accent,
+                animation: 'spin 0.8s linear infinite'
+              }} />
+              <span style={{ fontSize: 14, fontWeight: 600 }}>Loading data...</span>
+            </div>
+          </div>
+        )}
 
         {/* Filter Panel */}
         <div style={{
@@ -539,7 +559,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
                 }}>{d}d</button>
               ))}
             </div>
-            <button onClick={load} disabled={loading} style={{
+            <button onClick={handleRefresh} disabled={loading} style={{
               background: loading ? C.faint : C.accent, color: '#fff', border: 'none',
               borderRadius: 7, padding: '7px 14px', fontSize: 13, cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 600, marginLeft: 4
             }}>{loading ? '...' : '↻'}</button>
@@ -798,6 +818,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: ${C.faint}; border-radius: 3px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   )
