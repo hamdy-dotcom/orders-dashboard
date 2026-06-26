@@ -417,11 +417,29 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   // Computed tables from filtered orders
   const summary = useMemo(() => calcMetrics(filteredOrders), [filteredOrders])
   const roiSummary = useMemo(() => {
-    const totalAds = Object.values(adsMap).reduce((s, v) => s + v, 0) / 2 // divided by 2 because we double-counted merchant+product
+    const totalAds = Object.values(adsMap)
+      .filter((_, i) => {
+        const key = Object.keys(adsMap)[i]
+        if (!isAdmin || selectedMerchants.length === 0) return true
+        return selectedMerchants.includes(key)
+      })
+      .reduce((s, v) => s + v, 0) / 2
     return calcRoiMetrics(filteredOrders, totalAds)
-  }, [filteredOrders, adsMap])
-  const roiByProduct = useMemo(() => computeRoiByProduct(filteredOrders, adsMap), [filteredOrders, adsMap])
-  const roiByMerchant = useMemo(() => computeRoiByMerchant(filteredOrders, adsMap), [filteredOrders, adsMap])
+  }, [filteredOrders, adsMap, isAdmin, selectedMerchants])
+
+  const roiByProduct = useMemo(() => {
+    const filteredAdsMap = isAdmin && selectedMerchants.length > 0
+      ? Object.fromEntries(Object.entries(adsMap).filter(([k]) => selectedMerchants.includes(k)))
+      : adsMap
+    return computeRoiByProduct(filteredOrders, filteredAdsMap)
+  }, [filteredOrders, adsMap, isAdmin, selectedMerchants])
+
+  const roiByMerchant = useMemo(() => {
+    const filteredAdsMap = isAdmin && selectedMerchants.length > 0
+      ? Object.fromEntries(Object.entries(adsMap).filter(([k]) => selectedMerchants.includes(k)))
+      : adsMap
+    return computeRoiByMerchant(filteredOrders, filteredAdsMap)
+  }, [filteredOrders, adsMap, isAdmin, selectedMerchants])
   const timeline = useMemo(() => computeDailyTimeline(filteredOrders), [filteredOrders])
   const merchants = useMemo(() => computeMerchantPerformance(filteredOrders), [filteredOrders])
   const skus = useMemo(() => computeSkuPerformance(filteredOrders), [filteredOrders])
@@ -490,12 +508,14 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   ]
 
   const roiCommonCols = [
+    { key: 'totalOrders', label: 'Orders', render: v => fmt(v) },
     { key: 'deliveredCount', label: 'Delivered', render: v => fmt(v) },
     { key: 'dlvdAsp', label: 'DLVD ASP', render: v => fmtSAR(v) },
     { key: 'collected', label: 'Collected', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
     { key: 'cogs', label: 'COGS', render: v => fmtSAR(v) },
     { key: 'operationCost', label: 'Op. Cost', render: v => fmtSAR(v) },
     { key: 'adsSpent', label: 'Ads Spent', render: v => <span style={{ color: C.purple }}>{fmtSAR(v)}</span> },
+    { key: 'cpa', label: 'CPA', render: v => v > 0 ? <span style={{ color: C.orange }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
     { key: 'netProfit', label: 'Net Profit', render: v => <span style={{ color: v >= 0 ? C.green : C.accent, fontWeight: 700 }}>{fmtSAR(v)}</span> },
     { key: 'roi', label: 'ROI%', render: v => <RateBadge value={v} /> },
   ]
@@ -545,12 +565,14 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
         }}>
           {/* Row 1: Date range */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
-            <span style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, minWidth: 70 }}>Order Date</span>
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-              style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '7px 10px', color: C.text, fontSize: 13, outline: 'none' }} />
-            <span style={{ color: C.muted }}>→</span>
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-              style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '7px 10px', color: C.text, fontSize: 13, outline: 'none' }} />
+            <span style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>Order Date</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '4px 10px' }}>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 13, outline: 'none' }} />
+              <span style={{ color: C.muted }}>→</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 13, outline: 'none' }} />
+            </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {[7, 14, 30, 60].map(d => (
                 <button key={d} onClick={() => quickRange(d)} style={{
@@ -778,6 +800,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
             <KpiCard label="COGS" value={roiSummary.cogs} formatted={v => fmt(v) + ' SAR'} accent={C.orange} icon="📦" sub={roiSummary.cogs === 0 ? '⚠️ Pending sync' : 'Cost × Delivered Pcs'} />
             <KpiCard label="Operation Cost" value={roiSummary.operationCost} formatted={v => fmt(v) + ' SAR'} accent={C.muted} icon="⚙️" sub="30 SAR × Delivered" />
             <KpiCard label="Ads Spent" value={roiSummary.adsSpent} formatted={v => fmt(v) + ' SAR'} accent={C.purple} icon="📣" sub="Pending team input" />
+            <KpiCard label="CPA" value={roiSummary.cpa} formatted={v => v > 0 ? fmt(v) + ' SAR' : '—'} accent={C.orange} icon="🎯" sub="Spent ÷ Total Orders" />
             <KpiCard label="Net Profit" value={roiSummary.netProfit} formatted={v => fmt(v) + ' SAR'} accent={roiSummary.netProfit >= 0 ? C.green : C.accent} icon="📈" />
             <KpiCard label="ROI" value={roiSummary.roi} formatted={v => v + '%'} accent={roiSummary.roi >= 0 ? C.green : C.accent} icon="🎯" sub="Net Profit / (COGS + Ads)" />
           </div>
