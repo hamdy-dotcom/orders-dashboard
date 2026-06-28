@@ -326,6 +326,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   const [merchantAdsEntries, setMerchantAdsEntries] = useState([])
   const [pnlForm, setPnlForm] = useState({ merchant_id: '', date_from: format(subDays(new Date(), 30), 'yyyy-MM-dd'), date_to: format(new Date(), 'yyyy-MM-dd'), amount_sar: '', notes: '' })
   const [pnlSaving, setPnlSaving] = useState(false)
+  const [entriesOpen, setEntriesOpen] = useState(false)
 
   const load = useCallback(async (resetFilters = false) => {
     setLoading(true)
@@ -907,7 +908,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
         </>)}
 
 
-        {/* Merchants PNL Tab - Admin Only */}
+        {/* Internal PNL Tab - Admin Only */}
         {activeMainTab === 'pnl' && isAdmin && (
           <>
             {/* Spend Entry Form */}
@@ -969,25 +970,41 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
                   }}>{pnlSaving ? 'Saving...' : 'Log Spend'}</button>
               </div>
 
-              {/* Existing Entries */}
+              {/* Collapsible Entries */}
               {merchantAdsEntries.length > 0 && (
-                <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
-                  <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', marginBottom: 10 }}>All Entries</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {merchantAdsEntries.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map(e => (
-                      <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 14, background: C.bg, borderRadius: 8, padding: '8px 14px', fontSize: 13 }}>
-                        <span style={{ color: C.accent, fontWeight: 700, minWidth: 60 }}>#{e.merchant_id}</span>
-                        <span style={{ color: C.muted }}>{e.date_from} → {e.date_to}</span>
-                        <span style={{ color: C.text, fontWeight: 600 }}>{Number(e.amount_sar).toLocaleString()} SAR</span>
-                        <span style={{ color: C.purple, fontSize: 12 }}>+VAT: {Math.round(e.amount_sar * 1.14).toLocaleString()} SAR</span>
-                        {e.notes && <span style={{ color: C.muted, fontSize: 12 }}>{e.notes}</span>}
-                        <span style={{ color: C.faint, fontSize: 11, marginLeft: 'auto' }}>{e.submitted_by}</span>
-                        <button onClick={async () => {
-                          await supabase.from('merchant_ads_spending').delete().eq('id', e.id)
-                          load(false)
-                        }} style={{ background: 'none', border: 'none', color: C.accent, cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>×</button>
-                      </div>
-                    ))}
+                <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+                  <button onClick={() => setEntriesOpen(o => !o)} style={{
+                    background: 'none', border: 'none', color: C.muted, cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em',
+                    display: 'flex', alignItems: 'center', gap: 6, padding: 0
+                  }}>
+                    <span style={{ transition: 'transform 0.2s', display: 'inline-block', transform: entriesOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                    {entriesOpen ? 'Hide' : 'Show'} Entries ({merchantAdsEntries.length})
+                  </button>
+                  <div style={{
+                    overflow: 'hidden',
+                    maxHeight: entriesOpen ? '600px' : '0px',
+                    transition: 'max-height 0.3s ease',
+                    marginTop: entriesOpen ? 10 : 0
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {[...merchantAdsEntries].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map(e => (
+                        <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 14, background: C.bg, borderRadius: 8, padding: '8px 14px', fontSize: 13 }}>
+                          <span style={{ color: C.accent, fontWeight: 700, minWidth: 60 }}>
+                            {INTERNAL_MERCHANTS[String(e.merchant_id)] || `#${e.merchant_id}`}
+                          </span>
+                          <span style={{ color: C.muted }}>{e.date_from} → {e.date_to}</span>
+                          <span style={{ color: C.text, fontWeight: 600 }}>{Number(e.amount_sar).toLocaleString()} SAR</span>
+                          <span style={{ color: C.purple, fontSize: 12 }}>+VAT: {Math.round(e.amount_sar * 1.14).toLocaleString()} SAR</span>
+                          {e.notes && <span style={{ color: C.muted, fontSize: 12 }}>{e.notes}</span>}
+                          <span style={{ color: C.faint, fontSize: 11, marginLeft: 'auto' }}>{e.submitted_by}</span>
+                          <button onClick={async () => {
+                            await supabase.from('merchant_ads_spending').delete().eq('id', e.id)
+                            load(false)
+                          }} style={{ background: 'none', border: 'none', color: C.accent, cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>×</button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -995,17 +1012,43 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
 
             {/* PNL Table */}
             <Panel
-              title="Merchants P&L"
-              sub="Full profit & loss per merchant — ads include 14% VAT"
+              title="Internal P&L"
+              sub="Full profit & loss — ads include 14% VAT"
+              action={
+                <button onClick={() => {
+                  const cols = ['Merchant', 'Orders', 'Confirmed', '%CR', 'Delivered', '%DR', '%NDR', 'Collected', 'COGS', 'Op.Cost', 'Ads+VAT', 'CPA', 'Break-even CPA', 'Net Profit', '%ROI']
+                  const rows2 = merchantPnl.map(r => [
+                    r.merchantName, r.total, r.confirmed, r.confirmationRate + '%',
+                    r.delivered, r.deliveryRate + '%', r.netDeliveryRate + '%',
+                    r.collected, r.cogs, r.operationCost, r.adsSpent,
+                    r.cpa, r.breakEven, r.netProfit, r.roi + '%'
+                  ])
+                  const csv = [cols, ...rows2].map(r => r.join('\t')).join('\n')
+                  const blob = new Blob([csv], { type: 'text/tab-separated-values' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `Internal_PNL_${dateFrom}_${dateTo}.xls`
+                  a.click()
+                  URL.revokeObjectURL(url)
+                }} style={{
+                  background: C.green, color: '#fff', border: 'none', borderRadius: 7,
+                  padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6
+                }}>⬇ Excel</button>
+              }
             >
               <SortableTable
                 loading={loading}
                 rows={merchantPnl}
-                rowStyle={r => r._isTotal ? { background: C.faint, fontWeight: 700, borderTop: `2px solid ${C.border}` } : {}}
+                rowStyle={r => r._isTotal ? {
+                  background: '#1a2a1a',
+                  borderTop: `2px solid ${C.green}`,
+                  fontWeight: 700,
+                } : {}}
                 columns={[
                   { key: 'merchantName', label: 'Merchant', align: 'left', render: (v, r) => (
                     <span>
-                      <span style={{ color: r._isTotal ? C.text : C.accent, fontWeight: 700 }}>{v}</span>
+                      <span style={{ color: r._isTotal ? C.green : C.accent, fontWeight: 700 }}>{v}</span>
                       {!r._isTotal && <span style={{ color: C.faint, fontSize: 11, marginLeft: 6 }}>#{r.merchantId}</span>}
                     </span>
                   )},
@@ -1021,7 +1064,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
                   { key: 'adsSpent', label: 'Ads+VAT', render: v => <span style={{ color: C.purple }}>{fmtSAR(v)}</span> },
                   { key: 'cpa', label: 'CPA', render: v => v > 0 ? <span style={{ color: C.orange }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
                   { key: 'breakEven', label: 'Break-even CPA', render: v => v > 0 ? <span style={{ color: C.blue }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
-                  { key: 'netProfit', label: 'Net Profit', render: v => <span style={{ color: v >= 0 ? C.green : C.accent, fontWeight: 700 }}>{fmtSAR(v)}</span> },
+                  { key: 'netProfit', label: 'Net Profit', render: (v, r) => <span style={{ color: v >= 0 ? C.green : C.accent, fontWeight: r._isTotal ? 800 : 700, fontSize: r._isTotal ? 15 : 13 }}>{fmtSAR(v)}</span> },
                   { key: 'roi', label: '%ROI', render: v => <RateBadge value={v} /> },
                 ]}
               />
