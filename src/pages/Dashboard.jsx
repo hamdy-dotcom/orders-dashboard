@@ -322,6 +322,11 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   const [dispatchFrom, setDispatchFrom] = useState('')
   const [dispatchTo, setDispatchTo] = useState('')
 
+  const [merchantAdsMap, setMerchantAdsMap] = useState({})
+  const [merchantAdsEntries, setMerchantAdsEntries] = useState([])
+  const [pnlForm, setPnlForm] = useState({ merchant_id: '', date_from: format(subDays(new Date(), 30), 'yyyy-MM-dd'), date_to: format(new Date(), 'yyyy-MM-dd'), amount_sar: '', notes: '' })
+  const [pnlSaving, setPnlSaving] = useState(false)
+
   const load = useCallback(async (resetFilters = false) => {
     setLoading(true)
     try {
@@ -330,10 +335,13 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
       let adsQuery = supabase.from('ads_spending').select('*')
       if (!isAdmin && merchantId) adsQuery = adsQuery.eq('merchant_id', merchantId)
 
-      const [orders, hly, adsData] = await Promise.all([
+      const merchantAdsQuery = isAdmin ? supabase.from('merchant_ads_spending').select('*') : null
+
+      const [orders, hly, adsData, merchantAdsData] = await Promise.all([
         fetchOrders(from, to, isAdmin ? null : merchantId),
         fetchTodayVsYesterday(isAdmin ? null : merchantId),
-        adsQuery
+        adsQuery,
+        merchantAdsQuery || Promise.resolve({ data: [] })
       ])
 
       // Build adsMap
@@ -359,6 +367,24 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
       setRawOrders(orders)
       setAdsMap(map)
       setHourly(hly)
+
+      // Build merchantAdsMap from merchant_ads_spending (date-range overlap)
+      const mmap = {}
+      const entries = merchantAdsData.data || []
+      for (const entry of entries) {
+        const eFrom = entry.date_from
+        const eTo = entry.date_to
+        if (eTo < dateFrom || eFrom > dateTo) continue
+        const overlapFrom = eFrom > dateFrom ? eFrom : dateFrom
+        const overlapTo = eTo < dateTo ? eTo : dateTo
+        const totalDays = (new Date(eTo) - new Date(eFrom)) / 86400000 + 1
+        const overlapDays = (new Date(overlapTo) - new Date(overlapFrom)) / 86400000 + 1
+        const daily = (entry.amount_sar || 0) / totalDays
+        const overlap = daily * overlapDays
+        mmap[String(entry.merchant_id)] = (mmap[String(entry.merchant_id)] || 0) + overlap
+      }
+      setMerchantAdsMap(mmap)
+      setMerchantAdsEntries(entries)
 
       // Set COD bounds from actual data
       if (orders.length > 0) {
@@ -430,8 +456,8 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
 
   const merchantPnl = useMemo(() => {
     if (!isAdmin) return []
-    return computeMerchantPnl(filteredOrders, adsMap)
-  }, [filteredOrders, adsMap, isAdmin])
+    return computeMerchantPnl(filteredOrders, merchantAdsMap)
+  }, [filteredOrders, merchantAdsMap, isAdmin])
 
   const roiByProduct = useMemo(() => {
     const filteredAdsMap = isAdmin && selectedMerchants.length > 0
@@ -842,32 +868,118 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
 
         {/* Merchants PNL Tab - Admin Only */}
         {activeMainTab === 'pnl' && isAdmin && (
-          <Panel
-            title="Merchants P&L"
-            sub="Full profit & loss per merchant — ads include 14% VAT"
-          >
-            <SortableTable
-              loading={loading}
-              rows={merchantPnl}
-              columns={[
-                { key: 'merchantId', label: 'Merchant', align: 'left' },
-                { key: 'total', label: 'Orders', render: v => fmt(v) },
-                { key: 'confirmed', label: 'Confirmed', render: v => fmt(v) },
-                { key: 'confirmationRate', label: '%CR', render: v => <RateBadge value={v} /> },
-                { key: 'delivered', label: 'Delivered', render: v => fmt(v) },
-                { key: 'deliveryRate', label: '%DR', render: v => <RateBadge value={v} /> },
-                { key: 'netDeliveryRate', label: '%NDR', render: v => <RateBadge value={v} /> },
-                { key: 'collected', label: 'Collected', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
-                { key: 'cogs', label: 'COGS', render: v => fmtSAR(v) },
-                { key: 'operationCost', label: 'Op. Cost', render: v => fmtSAR(v) },
-                { key: 'adsSpent', label: 'Ads+VAT', render: v => <span style={{ color: C.purple }}>{fmtSAR(v)}</span> },
-                { key: 'cpa', label: 'CPA', render: v => v > 0 ? <span style={{ color: C.orange }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
-                { key: 'breakEven', label: 'Break-even CPA', render: v => v > 0 ? <span style={{ color: v > 0 ? C.blue : C.accent }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
-                { key: 'netProfit', label: 'Net Profit', render: v => <span style={{ color: v >= 0 ? C.green : C.accent, fontWeight: 700 }}>{fmtSAR(v)}</span> },
-                { key: 'roi', label: '%ROI', render: v => <RateBadge value={v} /> },
-              ]}
-            />
-          </Panel>
+          <>
+            {/* Spend Entry Form */}
+            <Panel title="Log Merchant Spend" sub="Amount auto-includes 14% VAT in all calculations">
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', padding: '4px 0 8px' }}>
+                <div>
+                  <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 5, textTransform: 'uppercase' }}>Merchant ID</div>
+                  <input value={pnlForm.merchant_id} onChange={e => setPnlForm(f => ({ ...f, merchant_id: e.target.value }))}
+                    placeholder="e.g. 862"
+                    style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '7px 12px', color: C.text, fontSize: 13, width: 120, outline: 'none' }} />
+                </div>
+                <div>
+                  <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 5, textTransform: 'uppercase' }}>Date Range</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '4px 10px' }}>
+                    <input type="date" value={pnlForm.date_from} onChange={e => setPnlForm(f => ({ ...f, date_from: e.target.value }))}
+                      style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 13, outline: 'none' }} />
+                    <span style={{ color: C.muted }}>→</span>
+                    <input type="date" value={pnlForm.date_to} onChange={e => setPnlForm(f => ({ ...f, date_to: e.target.value }))}
+                      style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 13, outline: 'none' }} />
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 5, textTransform: 'uppercase' }}>Amount (SAR)</div>
+                  <input type="number" value={pnlForm.amount_sar} onChange={e => setPnlForm(f => ({ ...f, amount_sar: e.target.value }))}
+                    placeholder="0.00"
+                    style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '7px 12px', color: C.text, fontSize: 13, width: 130, outline: 'none' }} />
+                </div>
+                <div>
+                  <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 5, textTransform: 'uppercase' }}>Notes</div>
+                  <input value={pnlForm.notes} onChange={e => setPnlForm(f => ({ ...f, notes: e.target.value }))}
+                    placeholder="Optional"
+                    style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '7px 12px', color: C.text, fontSize: 13, width: 180, outline: 'none' }} />
+                </div>
+                {pnlForm.amount_sar > 0 && (
+                  <div style={{ color: C.muted, fontSize: 12, paddingBottom: 8 }}>
+                    With VAT: <span style={{ color: C.purple, fontWeight: 700 }}>{Math.round(pnlForm.amount_sar * 1.14).toLocaleString()} SAR</span>
+                  </div>
+                )}
+                <button
+                  disabled={pnlSaving || !pnlForm.merchant_id || !pnlForm.amount_sar}
+                  onClick={async () => {
+                    setPnlSaving(true)
+                    await supabase.from('merchant_ads_spending').insert({
+                      merchant_id: String(pnlForm.merchant_id),
+                      date_from: pnlForm.date_from,
+                      date_to: pnlForm.date_to,
+                      amount_sar: parseFloat(pnlForm.amount_sar),
+                      notes: pnlForm.notes || null,
+                      submitted_by: user?.email || null,
+                    })
+                    setPnlForm(f => ({ ...f, merchant_id: '', amount_sar: '', notes: '' }))
+                    setPnlSaving(false)
+                    load(false)
+                  }}
+                  style={{
+                    background: (!pnlForm.merchant_id || !pnlForm.amount_sar) ? C.faint : C.accent,
+                    color: '#fff', border: 'none', borderRadius: 7, padding: '8px 20px',
+                    fontSize: 13, fontWeight: 700, cursor: 'pointer', marginBottom: 1
+                  }}>{pnlSaving ? 'Saving...' : 'Log Spend'}</button>
+              </div>
+
+              {/* Existing Entries */}
+              {merchantAdsEntries.length > 0 && (
+                <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
+                  <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', marginBottom: 10 }}>All Entries</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {merchantAdsEntries.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map(e => (
+                      <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 14, background: C.bg, borderRadius: 8, padding: '8px 14px', fontSize: 13 }}>
+                        <span style={{ color: C.accent, fontWeight: 700, minWidth: 60 }}>#{e.merchant_id}</span>
+                        <span style={{ color: C.muted }}>{e.date_from} → {e.date_to}</span>
+                        <span style={{ color: C.text, fontWeight: 600 }}>{Number(e.amount_sar).toLocaleString()} SAR</span>
+                        <span style={{ color: C.purple, fontSize: 12 }}>+VAT: {Math.round(e.amount_sar * 1.14).toLocaleString()} SAR</span>
+                        {e.notes && <span style={{ color: C.muted, fontSize: 12 }}>{e.notes}</span>}
+                        <span style={{ color: C.faint, fontSize: 11, marginLeft: 'auto' }}>{e.submitted_by}</span>
+                        <button onClick={async () => {
+                          await supabase.from('merchant_ads_spending').delete().eq('id', e.id)
+                          load(false)
+                        }} style={{ background: 'none', border: 'none', color: C.accent, cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Panel>
+
+            {/* PNL Table */}
+            <Panel
+              title="Merchants P&L"
+              sub="Full profit & loss per merchant — ads include 14% VAT"
+            >
+              <SortableTable
+                loading={loading}
+                rows={merchantPnl}
+                columns={[
+                  { key: 'merchantId', label: 'Merchant', align: 'left' },
+                  { key: 'total', label: 'Orders', render: v => fmt(v) },
+                  { key: 'confirmed', label: 'Confirmed', render: v => fmt(v) },
+                  { key: 'confirmationRate', label: '%CR', render: v => <RateBadge value={v} /> },
+                  { key: 'delivered', label: 'Delivered', render: v => fmt(v) },
+                  { key: 'deliveryRate', label: '%DR', render: v => <RateBadge value={v} /> },
+                  { key: 'netDeliveryRate', label: '%NDR', render: v => <RateBadge value={v} /> },
+                  { key: 'collected', label: 'Collected', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
+                  { key: 'cogs', label: 'COGS', render: v => fmtSAR(v) },
+                  { key: 'operationCost', label: 'Op. Cost', render: v => fmtSAR(v) },
+                  { key: 'adsSpent', label: 'Ads+VAT', render: v => <span style={{ color: C.purple }}>{fmtSAR(v)}</span> },
+                  { key: 'cpa', label: 'CPA', render: v => v > 0 ? <span style={{ color: C.orange }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
+                  { key: 'breakEven', label: 'Break-even CPA', render: v => v > 0 ? <span style={{ color: C.blue }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
+                  { key: 'netProfit', label: 'Net Profit', render: v => <span style={{ color: v >= 0 ? C.green : C.accent, fontWeight: 700 }}>{fmtSAR(v)}</span> },
+                  { key: 'roi', label: '%ROI', render: v => <RateBadge value={v} /> },
+                ]}
+              />
+            </Panel>
+          </>
         )}
 
       </div>
