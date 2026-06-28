@@ -306,7 +306,8 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [rawOrders, setRawOrders] = useState([])
-  const [adsMap, setAdsMap] = useState({})
+  const [adsByProduct, setAdsByProduct] = useState({})
+  const [adsByMerchant, setAdsByMerchant] = useState({})
   const [hourly, setHourly] = useState([])
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -345,8 +346,9 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
         merchantAdsQuery || Promise.resolve({ data: [] })
       ])
 
-      // Build adsMap
-      const map = {}
+      // Build adsMap - separate product and merchant maps, no double counting
+      const adsByProduct = {}
+      const adsByMerchant = {}
       if (adsData.data) {
         for (const entry of adsData.data) {
           const entryFrom = entry.date_from
@@ -356,17 +358,17 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
           const overlapTo = entryTo < dateTo ? entryTo : dateTo
           const totalDays = (new Date(entryTo) - new Date(entryFrom)) / 86400000 + 1
           const overlapDays = (new Date(overlapTo) - new Date(overlapFrom)) / 86400000 + 1
-          const dailySar = (entry.amount_sar || 0) / totalDays
-          const overlapSar = dailySar * overlapDays
+          const overlapSar = ((entry.amount_sar || 0) / totalDays) * overlapDays
           const productKey = `${entry.sku}||${entry.product_name}`
-          map[productKey] = (map[productKey] || 0) + overlapSar
-          const merchantKey = entry.merchant_id
-          map[merchantKey] = (map[merchantKey] || 0) + overlapSar
+          adsByProduct[productKey] = (adsByProduct[productKey] || 0) + overlapSar
+          const merchantKey = String(entry.merchant_id)
+          adsByMerchant[merchantKey] = (adsByMerchant[merchantKey] || 0) + overlapSar
         }
       }
 
       setRawOrders(orders)
-      setAdsMap(map)
+      setAdsByProduct(adsByProduct)
+      setAdsByMerchant(adsByMerchant)
       setHourly(hly)
 
       // Build merchantAdsMap from merchant_ads_spending (date-range overlap)
@@ -445,15 +447,13 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   // Computed tables from filtered orders
   const summary = useMemo(() => calcMetrics(filteredOrders), [filteredOrders])
   const roiSummary = useMemo(() => {
-    const totalAds = Object.values(adsMap)
-      .filter((_, i) => {
-        const key = Object.keys(adsMap)[i]
-        if (!isAdmin || selectedMerchants.length === 0) return true
-        return selectedMerchants.includes(key)
-      })
-      .reduce((s, v) => s + v, 0) / 2
+    // Total ads = sum of adsByMerchant, filtered if merchant filter active
+    const filteredMerchantAds = isAdmin && selectedMerchants.length > 0
+      ? Object.fromEntries(Object.entries(adsByMerchant).filter(([k]) => selectedMerchants.includes(k)))
+      : adsByMerchant
+    const totalAds = Object.values(filteredMerchantAds).reduce((s, v) => s + v, 0)
     return calcRoiMetrics(filteredOrders, totalAds)
-  }, [filteredOrders, adsMap, isAdmin, selectedMerchants])
+  }, [filteredOrders, adsByMerchant, isAdmin, selectedMerchants])
 
   const INTERNAL_MERCHANTS = {
     '862': 'Abdelrahman Meery',
@@ -502,18 +502,23 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   }, [filteredOrders, merchantAdsMap, isAdmin])
 
   const roiByProduct = useMemo(() => {
-    const filteredAdsMap = isAdmin && selectedMerchants.length > 0
-      ? Object.fromEntries(Object.entries(adsMap).filter(([k]) => selectedMerchants.includes(k)))
-      : adsMap
-    return computeRoiByProduct(filteredOrders, filteredAdsMap)
-  }, [filteredOrders, adsMap, isAdmin, selectedMerchants])
+    const filteredAds = isAdmin && selectedMerchants.length > 0
+      ? Object.fromEntries(Object.entries(adsByProduct).filter(([k]) => {
+          // Filter product ads by checking if the entry's merchant is selected
+          // Since adsByProduct is keyed by sku||name we can't filter by merchant here
+          // So show all product ads when merchant filter is active (merchant filter applies to orders)
+          return true
+        }))
+      : adsByProduct
+    return computeRoiByProduct(filteredOrders, filteredAds)
+  }, [filteredOrders, adsByProduct, isAdmin, selectedMerchants])
 
   const roiByMerchant = useMemo(() => {
-    const filteredAdsMap = isAdmin && selectedMerchants.length > 0
-      ? Object.fromEntries(Object.entries(adsMap).filter(([k]) => selectedMerchants.includes(k)))
-      : adsMap
-    return computeRoiByMerchant(filteredOrders, filteredAdsMap)
-  }, [filteredOrders, adsMap, isAdmin, selectedMerchants])
+    const filteredAds = isAdmin && selectedMerchants.length > 0
+      ? Object.fromEntries(Object.entries(adsByMerchant).filter(([k]) => selectedMerchants.includes(k)))
+      : adsByMerchant
+    return computeRoiByMerchant(filteredOrders, filteredAds)
+  }, [filteredOrders, adsByMerchant, isAdmin, selectedMerchants])
   const timeline = useMemo(() => computeDailyTimeline(filteredOrders), [filteredOrders])
   const merchants = useMemo(() => computeMerchantPerformance(filteredOrders), [filteredOrders])
   const skus = useMemo(() => computeSkuPerformance(filteredOrders), [filteredOrders])
