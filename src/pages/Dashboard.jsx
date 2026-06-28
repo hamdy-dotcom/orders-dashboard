@@ -870,6 +870,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
           </Panel>
         )}
 
+      <style>{`
         input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
         * { scrollbar-width: thin; scrollbar-color: ${C.faint} transparent; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
