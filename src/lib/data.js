@@ -156,9 +156,10 @@ export function computeSkuPerformance(orders) {
 }
 
 // Compute merchant × product matches from filtered orders
-export function calcRoiMetrics(orders, adsSpent = 0) {
+export function calcRoiMetrics(orders, adsSpentRaw = 0) {
   const delivered = orders.filter(o => o.order_status === 'Delivered')
   const totalOrders = orders.length
+  const adsSpent = Math.round(adsSpentRaw * 1.14 * 10) / 10 // +14% VAT
 
   const deliveredCount = delivered.length
   const collected = delivered.reduce((s, o) => s + (parseFloat(String(o.cod || 0).replace(/[^\d.]/g, '')) || 0), 0)
@@ -168,10 +169,11 @@ export function calcRoiMetrics(orders, adsSpent = 0) {
     return s + cost * pcs
   }, 0)
   const operationCost = deliveredCount * 30
-  const netProfit = collected - adsSpent - operationCost
+  const netProfit = collected - adsSpent - operationCost - cogs
   const roi = (cogs + adsSpent) > 0 ? (netProfit / (cogs + adsSpent)) * 100 : 0
   const dlvdAsp = deliveredCount > 0 ? collected / deliveredCount : 0
   const cpa = totalOrders > 0 && adsSpent > 0 ? adsSpent / totalOrders : 0
+  const breakEven = totalOrders > 0 ? (collected - cogs - operationCost) / totalOrders : 0
 
   return {
     deliveredCount,
@@ -180,10 +182,12 @@ export function calcRoiMetrics(orders, adsSpent = 0) {
     cogs: Math.round(cogs),
     operationCost: Math.round(operationCost),
     adsSpent: Math.round(adsSpent),
+    adsSpentRaw: Math.round(adsSpentRaw),
     netProfit: Math.round(netProfit),
     roi: Math.round(roi * 10) / 10,
     dlvdAsp: Math.round(dlvdAsp * 10) / 10,
     cpa: Math.round(cpa * 10) / 10,
+    breakEven: Math.round(breakEven * 10) / 10,
   }
 }
 
@@ -230,6 +234,30 @@ export function computeMerchantSkuPerformance(orders) {
       return { merchantId, sku, productName, ...calcMetrics(keyOrders) }
     })
     .sort((a, b) => b.total - a.total)
+}
+
+export function computeMerchantPnl(orders, adsMap = {}) {
+  const byMerchant = {}
+  for (const o of orders) {
+    const mid = String(o.merchant_id || 'Unknown')
+    if (!byMerchant[mid]) byMerchant[mid] = []
+    byMerchant[mid].push(o)
+  }
+  return Object.entries(byMerchant).map(([merchantId, merchantOrders]) => {
+    const ads = adsMap[merchantId] || 0
+    const metrics = calcRoiMetrics(merchantOrders, ads)
+    const perf = calcMetrics(merchantOrders)
+    return {
+      merchantId,
+      total: perf.total,
+      confirmed: perf.confirmed,
+      confirmationRate: perf.confirmationRate,
+      delivered: perf.delivered,
+      deliveryRate: perf.deliveryRate,
+      netDeliveryRate: perf.netDeliveryRate,
+      ...metrics,
+    }
+  }).sort((a, b) => b.total - a.total)
 }
 
 // Fetch today vs yesterday hourly
