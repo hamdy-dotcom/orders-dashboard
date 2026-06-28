@@ -8,6 +8,7 @@ import {
   calcRoiMetrics,
   computeRoiByProduct,
   computeRoiByMerchant,
+  computeMerchantPnl,
   computeDailyTimeline,
   computeMerchantPerformance,
   computeSkuPerformance,
@@ -427,7 +428,10 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
     return calcRoiMetrics(filteredOrders, totalAds)
   }, [filteredOrders, adsMap, isAdmin, selectedMerchants])
 
-  const roiByProduct = useMemo(() => {
+  const merchantPnl = useMemo(() => {
+    if (!isAdmin) return []
+    return computeMerchantPnl(filteredOrders, adsMap)
+  }, [filteredOrders, adsMap, isAdmin])
     const filteredAdsMap = isAdmin && selectedMerchants.length > 0
       ? Object.fromEntries(Object.entries(adsMap).filter(([k]) => selectedMerchants.includes(k)))
       : adsMap
@@ -684,6 +688,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
           {[
             { id: 'performance', label: '📊 Performance' },
             { id: 'roi', label: '💰 ROI Analysis' },
+            ...(isAdmin ? [{ id: 'pnl', label: '🏦 Merchants PNL' }] : []),
           ].map(t => (
             <button key={t.id} onClick={() => setActiveMainTab(t.id)} style={{
               background: activeMainTab === t.id ? C.accent : C.card,
@@ -833,9 +838,36 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
         </>)}
 
 
-      </div>
+        {/* Merchants PNL Tab - Admin Only */}
+        {activeMainTab === 'pnl' && isAdmin && (
+          <Panel
+            title="Merchants P&L"
+            sub="Full profit & loss per merchant — ads include 14% VAT"
+          >
+            <SortableTable
+              loading={loading}
+              rows={merchantPnl}
+              columns={[
+                { key: 'merchantId', label: 'Merchant', align: 'left' },
+                { key: 'total', label: 'Orders', render: v => fmt(v) },
+                { key: 'confirmed', label: 'Confirmed', render: v => fmt(v) },
+                { key: 'confirmationRate', label: '%CR', render: v => <RateBadge value={v} /> },
+                { key: 'delivered', label: 'Delivered', render: v => fmt(v) },
+                { key: 'deliveryRate', label: '%DR', render: v => <RateBadge value={v} /> },
+                { key: 'netDeliveryRate', label: '%NDR', render: v => <RateBadge value={v} /> },
+                { key: 'collected', label: 'Collected', render: v => <span style={{ color: C.green }}>{fmtSAR(v)}</span> },
+                { key: 'cogs', label: 'COGS', render: v => fmtSAR(v) },
+                { key: 'operationCost', label: 'Op. Cost', render: v => fmtSAR(v) },
+                { key: 'adsSpent', label: 'Ads+VAT', render: v => <span style={{ color: C.purple }}>{fmtSAR(v)}</span> },
+                { key: 'cpa', label: 'CPA', render: v => v > 0 ? <span style={{ color: C.orange }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
+                { key: 'breakEven', label: 'Break-even CPA', render: v => v > 0 ? <span style={{ color: v > 0 ? C.blue : C.accent }}>{fmtSAR(v)}</span> : <span style={{ color: C.faint }}>—</span> },
+                { key: 'netProfit', label: 'Net Profit', render: v => <span style={{ color: v >= 0 ? C.green : C.accent, fontWeight: 700 }}>{fmtSAR(v)}</span> },
+                { key: 'roi', label: '%ROI', render: v => <RateBadge value={v} /> },
+              ]}
+            />
+          </Panel>
+        )}
 
-      <style>{`
         input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
         * { scrollbar-width: thin; scrollbar-color: ${C.faint} transparent; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
