@@ -233,7 +233,7 @@ function RangeSlider({ min, max, value, onChange, label }) {
   )
 }
 
-function SortableTable({ columns, rows, loading }) {
+function SortableTable({ columns, rows, loading, rowStyle }) {
   const [sort, setSort] = useState({ key: columns[1]?.key || columns[0]?.key, dir: -1 })
   const [page, setPage] = useState(1)
   const PER = 15
@@ -274,9 +274,9 @@ function SortableTable({ columns, rows, loading }) {
           </thead>
           <tbody>
             {slice.map((row, i) => (
-              <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}
+              <tr key={i} style={{ borderBottom: `1px solid ${C.border}`, ...(rowStyle ? rowStyle(row) : {}) }}
                 onMouseEnter={e => e.currentTarget.style.background = C.surface}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                onMouseLeave={e => e.currentTarget.style.background = rowStyle?.(row)?.background || 'transparent'}>
                 {columns.map(col => (
                   <td key={col.key} style={{ padding: '10px 14px', textAlign: col.align || 'right', color: C.text, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                     {col.render ? col.render(row[col.key], row) : row[col.key]}
@@ -454,9 +454,50 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
     return calcRoiMetrics(filteredOrders, totalAds)
   }, [filteredOrders, adsMap, isAdmin, selectedMerchants])
 
+  const INTERNAL_MERCHANTS = {
+    '862': 'Abdelrahman Meery',
+    '685': 'Marawan Nouby',
+    '251': 'Ahmed Wagdy',
+    '240': 'Hamdy',
+    '1939': 'Abdo Hamdy',
+    '1580': 'Kirollos Maged',
+    '1922': 'Abdelaziz',
+  }
+  const INTERNAL_IDS = Object.keys(INTERNAL_MERCHANTS)
+
   const merchantPnl = useMemo(() => {
     if (!isAdmin) return []
-    return computeMerchantPnl(filteredOrders, merchantAdsMap)
+    const rows = computeMerchantPnl(filteredOrders, merchantAdsMap)
+      .filter(r => INTERNAL_IDS.includes(String(r.merchantId)))
+      .map(r => ({ ...r, merchantName: INTERNAL_MERCHANTS[String(r.merchantId)] || r.merchantId }))
+
+    // Totals row
+    if (rows.length === 0) return rows
+    const totals = rows.reduce((acc, r) => ({
+      merchantId: 'TOTAL',
+      merchantName: '— Total —',
+      total: (acc.total || 0) + r.total,
+      confirmed: (acc.confirmed || 0) + r.confirmed,
+      confirmationRate: 0,
+      delivered: (acc.delivered || 0) + r.delivered,
+      deliveryRate: 0,
+      netDeliveryRate: 0,
+      collected: (acc.collected || 0) + r.collected,
+      cogs: (acc.cogs || 0) + r.cogs,
+      operationCost: (acc.operationCost || 0) + r.operationCost,
+      adsSpent: (acc.adsSpent || 0) + r.adsSpent,
+      netProfit: (acc.netProfit || 0) + r.netProfit,
+      cpa: 0, breakEven: 0, roi: 0, _isTotal: true,
+    }), {})
+    // Recalculate rates for totals
+    totals.confirmationRate = totals.total > 0 ? Math.round(totals.confirmed / totals.total * 1000) / 10 : 0
+    totals.deliveryRate = totals.confirmed > 0 ? Math.round(totals.delivered / totals.confirmed * 1000) / 10 : 0
+    totals.netDeliveryRate = totals.total > 0 ? Math.round(totals.delivered / totals.total * 1000) / 10 : 0
+    totals.cpa = totals.total > 0 && totals.adsSpent > 0 ? Math.round(totals.adsSpent / totals.total * 10) / 10 : 0
+    totals.breakEven = totals.total > 0 ? Math.round((totals.collected - totals.cogs - totals.operationCost) / totals.total * 10) / 10 : 0
+    totals.roi = (totals.cogs + totals.adsSpent) > 0 ? Math.round(totals.netProfit / (totals.cogs + totals.adsSpent) * 1000) / 10 : 0
+
+    return [...rows, totals]
   }, [filteredOrders, merchantAdsMap, isAdmin])
 
   const roiByProduct = useMemo(() => {
@@ -716,7 +757,7 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
           {[
             { id: 'performance', label: '📊 Performance' },
             { id: 'roi', label: '💰 ROI Analysis' },
-            ...(isAdmin ? [{ id: 'pnl', label: '🏦 Merchants PNL' }] : []),
+            ...(isAdmin ? [{ id: 'pnl', label: '🏦 Internal PNL' }] : []),
           ].map(t => (
             <button key={t.id} onClick={() => setActiveMainTab(t.id)} style={{
               background: activeMainTab === t.id ? C.accent : C.card,
@@ -960,8 +1001,14 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
               <SortableTable
                 loading={loading}
                 rows={merchantPnl}
+                rowStyle={r => r._isTotal ? { background: C.faint, fontWeight: 700, borderTop: `2px solid ${C.border}` } : {}}
                 columns={[
-                  { key: 'merchantId', label: 'Merchant', align: 'left' },
+                  { key: 'merchantName', label: 'Merchant', align: 'left', render: (v, r) => (
+                    <span>
+                      <span style={{ color: r._isTotal ? C.text : C.accent, fontWeight: 700 }}>{v}</span>
+                      {!r._isTotal && <span style={{ color: C.faint, fontSize: 11, marginLeft: 6 }}>#{r.merchantId}</span>}
+                    </span>
+                  )},
                   { key: 'total', label: 'Orders', render: v => fmt(v) },
                   { key: 'confirmed', label: 'Confirmed', render: v => fmt(v) },
                   { key: 'confirmationRate', label: '%CR', render: v => <RateBadge value={v} /> },
