@@ -432,6 +432,8 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
     if (!isAdmin) return []
     return computeMerchantPnl(filteredOrders, adsMap)
   }, [filteredOrders, adsMap, isAdmin])
+
+  const roiByProduct = useMemo(() => {
     const filteredAdsMap = isAdmin && selectedMerchants.length > 0
       ? Object.fromEntries(Object.entries(adsMap).filter(([k]) => selectedMerchants.includes(k)))
       : adsMap
