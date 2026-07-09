@@ -161,7 +161,7 @@ export default function Creatives({ user, isAdmin }) {
       .select('id, email, role')
     if (error) console.error('user_profiles error:', error)
     console.log('All profiles:', data)
-    setTeamMembers((data || []).filter(m => m.role === 'team'))
+    setTeamMembers((data || []).filter(m => m.role === 'merchant'))
   }, [])
 
   useEffect(() => {
