@@ -140,12 +140,12 @@ export default function Creatives({ user, isAdmin }) {
 
   // Admin form state
   const [adminForm, setAdminForm] = useState({
-    title: '', product_name: '', sku: '', assigned_to: '', file: null, notes: ''
+    title: '', product_name: '', sku: '', assigned_to: '', files: [], notes: ''
   })
 
   // Team form state
   const [teamForm, setTeamForm] = useState({
-    title: '', product_name: '', sku: '', file: null, notes: ''
+    title: '', product_name: '', sku: '', files: [], notes: ''
   })
 
   const loadCreatives = useCallback(async () => {
@@ -156,7 +156,12 @@ export default function Creatives({ user, isAdmin }) {
   }, [])
 
   const loadTeamMembers = useCallback(async () => {
-    const { data } = await supabase.from('user_profiles').select('id, email, role')
+    // Fetch all profiles with role 'team' — admins can see all via RLS
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id, email, role')
+      .eq('role', 'team')
+    console.log('Team members:', data, error)
     setTeamMembers(data || [])
   }, [])
 
@@ -175,46 +180,50 @@ export default function Creatives({ user, isAdmin }) {
   }
 
   const handleAdminSubmit = async () => {
-    if (!adminForm.file || !adminForm.title || !adminForm.assigned_to) return
+    if (!adminForm.files.length || !adminForm.title || !adminForm.assigned_to) return
     setUploading(true)
     try {
-      const { url, type } = await uploadFile(adminForm.file)
-      await supabase.from('creatives').insert({
-        title: adminForm.title,
-        file_url: url,
-        file_type: type,
-        product_name: adminForm.product_name || null,
-        sku: adminForm.sku || null,
-        assigned_to: adminForm.assigned_to,
-        submitted_by: user.id,
-        direction: 'admin_to_team',
-        status: 'approved',
-        notes: adminForm.notes || null,
-      })
-      setAdminForm({ title: '', product_name: '', sku: '', assigned_to: '', file: null, notes: '' })
+      for (const file of adminForm.files) {
+        const { url, type } = await uploadFile(file)
+        await supabase.from('creatives').insert({
+          title: adminForm.files.length > 1 ? `${adminForm.title} (${file.name})` : adminForm.title,
+          file_url: url,
+          file_type: type,
+          product_name: adminForm.product_name || null,
+          sku: adminForm.sku || null,
+          assigned_to: adminForm.assigned_to,
+          submitted_by: user.id,
+          direction: 'admin_to_team',
+          status: 'approved',
+          notes: adminForm.notes || null,
+        })
+      }
+      setAdminForm({ title: '', product_name: '', sku: '', assigned_to: '', files: [], notes: '' })
       loadCreatives()
     } catch (e) { console.error(e) }
     setUploading(false)
   }
 
   const handleTeamSubmit = async () => {
-    if (!teamForm.file || !teamForm.title) return
+    if (!teamForm.files.length || !teamForm.title) return
     setUploading(true)
     try {
-      const { url, type } = await uploadFile(teamForm.file)
-      await supabase.from('creatives').insert({
-        title: teamForm.title,
-        file_url: url,
-        file_type: type,
-        product_name: teamForm.product_name || null,
-        sku: teamForm.sku || null,
-        assigned_to: user.id,
-        submitted_by: user.id,
-        direction: 'team_to_admin',
-        status: 'pending',
-        notes: teamForm.notes || null,
-      })
-      setTeamForm({ title: '', product_name: '', sku: '', file: null, notes: '' })
+      for (const file of teamForm.files) {
+        const { url, type } = await uploadFile(file)
+        await supabase.from('creatives').insert({
+          title: teamForm.files.length > 1 ? `${teamForm.title} (${file.name})` : teamForm.title,
+          file_url: url,
+          file_type: type,
+          product_name: teamForm.product_name || null,
+          sku: teamForm.sku || null,
+          assigned_to: user.id,
+          submitted_by: user.id,
+          direction: 'team_to_admin',
+          status: 'pending',
+          notes: teamForm.notes || null,
+        })
+      }
+      setTeamForm({ title: '', product_name: '', sku: '', files: [], notes: '' })
       loadCreatives()
     } catch (e) { console.error(e) }
     setUploading(false)
@@ -359,27 +368,34 @@ export default function Creatives({ user, isAdmin }) {
                 placeholder="Optional notes for the team member" style={inputStyle} />
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
-              <label style={labelStyle}>Upload File * (image or video)</label>
-              <input type="file" accept="image/*,video/*"
-                onChange={e => setAdminForm(f => ({ ...f, file: e.target.files[0] }))}
+              <label style={labelStyle}>Upload Files * (image or video, select multiple)</label>
+              <input type="file" accept="image/*,video/*" multiple
+                onChange={e => setAdminForm(f => ({ ...f, files: Array.from(e.target.files) }))}
                 style={{ ...inputStyle, padding: '6px 12px' }} />
-              {adminForm.file && (
-                <div style={{ marginTop: 8, fontSize: 12, color: C.muted }}>
-                  Selected: {adminForm.file.name} ({(adminForm.file.size / 1024 / 1024).toFixed(1)} MB)
+              {adminForm.files.length > 0 && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {adminForm.files.map((f, i) => (
+                    <div key={i} style={{ fontSize: 12, color: C.muted }}>
+                      📎 {f.name} <span style={{ color: C.faint }}>({(f.size / 1024 / 1024).toFixed(1)} MB)</span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 12, color: C.blue, fontWeight: 600, marginTop: 2 }}>
+                    {adminForm.files.length} file{adminForm.files.length > 1 ? 's' : ''} selected
+                  </div>
                 </div>
               )}
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
               <button
-                disabled={uploading || !adminForm.file || !adminForm.title || !adminForm.assigned_to}
+                disabled={uploading || !adminForm.files.length || !adminForm.title || !adminForm.assigned_to}
                 onClick={handleAdminSubmit}
                 style={{
-                  background: (uploading || !adminForm.file || !adminForm.title || !adminForm.assigned_to) ? C.faint : C.accent,
+                  background: (uploading || !adminForm.files.length || !adminForm.title || !adminForm.assigned_to) ? C.faint : C.accent,
                   color: '#fff', border: 'none', borderRadius: 8,
                   padding: '10px 28px', fontSize: 14, fontWeight: 700,
-                  cursor: (uploading || !adminForm.file || !adminForm.title || !adminForm.assigned_to) ? 'not-allowed' : 'pointer'
+                  cursor: (uploading || !adminForm.files.length || !adminForm.title || !adminForm.assigned_to) ? 'not-allowed' : 'pointer'
                 }}>
-                {uploading ? '⏳ Uploading...' : '📤 Assign Creative'}
+                {uploading ? `⏳ Uploading...` : `📤 Assign ${adminForm.files.length > 1 ? adminForm.files.length + ' Creatives' : 'Creative'}`}
               </button>
             </div>
           </div>
@@ -426,27 +442,34 @@ export default function Creatives({ user, isAdmin }) {
                 placeholder="Any context or notes for the admin" style={inputStyle} />
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
-              <label style={labelStyle}>Upload File * (image or video)</label>
-              <input type="file" accept="image/*,video/*"
-                onChange={e => setTeamForm(f => ({ ...f, file: e.target.files[0] }))}
+              <label style={labelStyle}>Upload Files * (image or video, select multiple)</label>
+              <input type="file" accept="image/*,video/*" multiple
+                onChange={e => setTeamForm(f => ({ ...f, files: Array.from(e.target.files) }))}
                 style={{ ...inputStyle, padding: '6px 12px' }} />
-              {teamForm.file && (
-                <div style={{ marginTop: 8, fontSize: 12, color: C.muted }}>
-                  Selected: {teamForm.file.name} ({(teamForm.file.size / 1024 / 1024).toFixed(1)} MB)
+              {teamForm.files.length > 0 && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {teamForm.files.map((f, i) => (
+                    <div key={i} style={{ fontSize: 12, color: C.muted }}>
+                      📎 {f.name} <span style={{ color: C.faint }}>({(f.size / 1024 / 1024).toFixed(1)} MB)</span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 12, color: C.blue, fontWeight: 600, marginTop: 2 }}>
+                    {teamForm.files.length} file{teamForm.files.length > 1 ? 's' : ''} selected
+                  </div>
                 </div>
               )}
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
               <button
-                disabled={uploading || !teamForm.file || !teamForm.title}
+                disabled={uploading || !teamForm.files.length || !teamForm.title}
                 onClick={handleTeamSubmit}
                 style={{
-                  background: (uploading || !teamForm.file || !teamForm.title) ? C.faint : C.blue,
+                  background: (uploading || !teamForm.files.length || !teamForm.title) ? C.faint : C.blue,
                   color: '#fff', border: 'none', borderRadius: 8,
                   padding: '10px 28px', fontSize: 14, fontWeight: 700,
-                  cursor: (uploading || !teamForm.file || !teamForm.title) ? 'not-allowed' : 'pointer'
+                  cursor: (uploading || !teamForm.files.length || !teamForm.title) ? 'not-allowed' : 'pointer'
                 }}>
-                {uploading ? '⏳ Uploading...' : '📨 Submit for Approval'}
+                {uploading ? '⏳ Uploading...' : `📨 Submit ${teamForm.files.length > 1 ? teamForm.files.length + ' Creatives' : 'for Approval'}`}
               </button>
             </div>
           </div>
