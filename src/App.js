@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import AdsSpending from './pages/AdsSpending'
+import Creatives from './pages/Creatives'
 
 const C = {
   bg: '#13151f', surface: '#1c1f2e', card: '#222538', border: '#2e3350',
@@ -61,6 +62,7 @@ export default function App() {
   const navItems = [
     { id: 'dashboard', label: '📊 Performance' },
     { id: 'ads', label: '📣 Ads Spending' },
+    { id: 'creatives', label: '🎨 Creatives' },
   ]
 
   return (
@@ -109,6 +111,7 @@ export default function App() {
 
       {activePage === 'dashboard' && <Dashboard user={session.user} isAdmin={isAdmin} merchantId={merchantId} />}
       {activePage === 'ads' && <AdsSpending user={session.user} isAdmin={isAdmin} merchantId={merchantId} />}
+      {activePage === 'creatives' && <Creatives user={session.user} isAdmin={isAdmin} />}
     </div>
   )
 }
