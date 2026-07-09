@@ -39,7 +39,61 @@ function StatusBadge({ status }) {
   )
 }
 
-function CreativeCard({ creative, isAdmin, onApprove, onReject, onDelete, teamMembers }) {
+function ProductPicker({ value, onChange, inputStyle, labelStyle }) {
+  const [products, setProducts] = useState([])
+  const [mode, setMode] = useState('select') // 'select' | 'create'
+  const [newName, setNewName] = useState('')
+
+  useEffect(() => {
+    supabase.from('products').select('id, product_name, sku').order('product_name').then(({ data }) => {
+      setProducts(data || [])
+    })
+  }, [])
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return
+    const { data, error } = await supabase.from('products').insert({ product_name: newName.trim() }).select().single()
+    if (!error && data) {
+      setProducts(p => [...p, data].sort((a, b) => a.product_name.localeCompare(b.product_name)))
+      onChange(data.product_name)
+      setMode('select')
+      setNewName('')
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+        <label style={{ ...labelStyle, marginBottom: 0 }}>Product Name</label>
+        <button onClick={() => setMode(m => m === 'select' ? 'create' : 'select')} style={{
+          background: 'none', border: 'none', color: C.blue, fontSize: 11,
+          cursor: 'pointer', fontWeight: 600, padding: 0
+        }}>{mode === 'select' ? '+ New product' : '← Pick existing'}</button>
+      </div>
+
+      {mode === 'select' ? (
+        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle }}>
+          <option value="">— Select product —</option>
+          {products.map(p => (
+            <option key={p.id} value={p.product_name}>{p.product_name}</option>
+          ))}
+        </select>
+      ) : (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input value={newName} onChange={e => setNewName(e.target.value)}
+            placeholder="New product name"
+            onKeyDown={e => e.key === 'Enter' && handleCreate()}
+            style={{ ...inputStyle, flex: 1 }} />
+          <button onClick={handleCreate} disabled={!newName.trim()} style={{
+            background: newName.trim() ? C.green : C.faint,
+            color: '#fff', border: 'none', borderRadius: 7,
+            padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: newName.trim() ? 'pointer' : 'not-allowed'
+          }}>Add</button>
+        </div>
+      )}
+    </div>
+  )
+}
   const [notesOpen, setNotesOpen] = useState(false)
   const [rejectNote, setRejectNote] = useState('')
   const isImage = creative.file_type?.startsWith('image/')
@@ -342,9 +396,12 @@ export default function Creatives({ user, isAdmin }) {
                 placeholder="e.g. Summer Campaign Video 1" style={inputStyle} />
             </div>
             <div>
-              <label style={labelStyle}>Product Name</label>
-              <input value={adminForm.product_name} onChange={e => setAdminForm(f => ({ ...f, product_name: e.target.value }))}
-                placeholder="e.g. Hair Serum" style={inputStyle} />
+              <ProductPicker
+                value={adminForm.product_name}
+                onChange={v => setAdminForm(f => ({ ...f, product_name: v }))}
+                inputStyle={inputStyle}
+                labelStyle={labelStyle}
+              />
             </div>
             <div>
               <label style={labelStyle}>SKU</label>
@@ -438,9 +495,12 @@ export default function Creatives({ user, isAdmin }) {
                 placeholder="e.g. Product Demo Video" style={inputStyle} />
             </div>
             <div>
-              <label style={labelStyle}>Product Name</label>
-              <input value={teamForm.product_name} onChange={e => setTeamForm(f => ({ ...f, product_name: e.target.value }))}
-                placeholder="e.g. Hair Serum" style={inputStyle} />
+              <ProductPicker
+                value={teamForm.product_name}
+                onChange={v => setTeamForm(f => ({ ...f, product_name: v }))}
+                inputStyle={inputStyle}
+                labelStyle={labelStyle}
+              />
             </div>
             <div>
               <label style={labelStyle}>SKU</label>
