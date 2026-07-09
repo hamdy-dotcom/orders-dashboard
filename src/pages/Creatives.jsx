@@ -156,13 +156,12 @@ export default function Creatives({ user, isAdmin }) {
   }, [])
 
   const loadTeamMembers = useCallback(async () => {
-    // Fetch all profiles with role 'team' — admins can see all via RLS
     const { data, error } = await supabase
       .from('user_profiles')
       .select('id, email, role')
-      .eq('role', 'team')
-    console.log('Team members:', data, error)
-    setTeamMembers(data || [])
+    if (error) console.error('user_profiles error:', error)
+    console.log('All profiles:', data)
+    setTeamMembers((data || []).filter(m => m.role === 'team'))
   }, [])
 
   useEffect(() => {
@@ -357,7 +356,8 @@ export default function Creatives({ user, isAdmin }) {
               <select value={adminForm.assigned_to} onChange={e => setAdminForm(f => ({ ...f, assigned_to: e.target.value }))}
                 style={{ ...inputStyle }}>
                 <option value="">— Select team member —</option>
-                {teamMembers.filter(m => m.role !== 'admin').map(m => (
+                {teamMembers.length === 0 && <option disabled>No team members found</option>}
+                {teamMembers.map(m => (
                   <option key={m.id} value={m.id}>{m.email}</option>
                 ))}
               </select>
@@ -368,19 +368,30 @@ export default function Creatives({ user, isAdmin }) {
                 placeholder="Optional notes for the team member" style={inputStyle} />
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
-              <label style={labelStyle}>Upload Files * (image or video, select multiple)</label>
+              <label style={labelStyle}>Upload Files * (image or video)</label>
               <input type="file" accept="image/*,video/*" multiple
-                onChange={e => setAdminForm(f => ({ ...f, files: Array.from(e.target.files) }))}
+                onChange={e => setAdminForm(f => ({ ...f, files: [...f.files, ...Array.from(e.target.files)] }))}
                 style={{ ...inputStyle, padding: '6px 12px' }} />
               {adminForm.files.length > 0 && (
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {adminForm.files.map((f, i) => (
-                    <div key={i} style={{ fontSize: 12, color: C.muted }}>
-                      📎 {f.name} <span style={{ color: C.faint }}>({(f.size / 1024 / 1024).toFixed(1)} MB)</span>
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
+                      <span>📎 {f.name} <span style={{ color: C.faint }}>({(f.size / 1024 / 1024).toFixed(1)} MB)</span></span>
+                      <button onClick={() => setAdminForm(frm => ({ ...frm, files: frm.files.filter((_, idx) => idx !== i) }))}
+                        style={{ background: 'none', border: 'none', color: C.accent, cursor: 'pointer', fontSize: 14, padding: 0 }}>×</button>
                     </div>
                   ))}
-                  <div style={{ fontSize: 12, color: C.blue, fontWeight: 600, marginTop: 2 }}>
-                    {adminForm.files.length} file{adminForm.files.length > 1 ? 's' : ''} selected
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                    <span style={{ fontSize: 12, color: C.blue, fontWeight: 600 }}>
+                      {adminForm.files.length} file{adminForm.files.length > 1 ? 's' : ''} queued
+                    </span>
+                    <label style={{ fontSize: 12, color: C.muted, cursor: 'pointer', textDecoration: 'underline' }}>
+                      + Add more
+                      <input type="file" accept="image/*,video/*" multiple style={{ display: 'none' }}
+                        onChange={e => setAdminForm(f => ({ ...f, files: [...f.files, ...Array.from(e.target.files)] }))} />
+                    </label>
+                    <button onClick={() => setAdminForm(f => ({ ...f, files: [] }))}
+                      style={{ fontSize: 12, color: C.faint, background: 'none', border: 'none', cursor: 'pointer' }}>Clear all</button>
                   </div>
                 </div>
               )}
@@ -442,19 +453,30 @@ export default function Creatives({ user, isAdmin }) {
                 placeholder="Any context or notes for the admin" style={inputStyle} />
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
-              <label style={labelStyle}>Upload Files * (image or video, select multiple)</label>
+              <label style={labelStyle}>Upload Files * (image or video)</label>
               <input type="file" accept="image/*,video/*" multiple
-                onChange={e => setTeamForm(f => ({ ...f, files: Array.from(e.target.files) }))}
+                onChange={e => setTeamForm(f => ({ ...f, files: [...f.files, ...Array.from(e.target.files)] }))}
                 style={{ ...inputStyle, padding: '6px 12px' }} />
               {teamForm.files.length > 0 && (
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {teamForm.files.map((f, i) => (
-                    <div key={i} style={{ fontSize: 12, color: C.muted }}>
-                      📎 {f.name} <span style={{ color: C.faint }}>({(f.size / 1024 / 1024).toFixed(1)} MB)</span>
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
+                      <span>📎 {f.name} <span style={{ color: C.faint }}>({(f.size / 1024 / 1024).toFixed(1)} MB)</span></span>
+                      <button onClick={() => setTeamForm(frm => ({ ...frm, files: frm.files.filter((_, idx) => idx !== i) }))}
+                        style={{ background: 'none', border: 'none', color: C.accent, cursor: 'pointer', fontSize: 14, padding: 0 }}>×</button>
                     </div>
                   ))}
-                  <div style={{ fontSize: 12, color: C.blue, fontWeight: 600, marginTop: 2 }}>
-                    {teamForm.files.length} file{teamForm.files.length > 1 ? 's' : ''} selected
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                    <span style={{ fontSize: 12, color: C.blue, fontWeight: 600 }}>
+                      {teamForm.files.length} file{teamForm.files.length > 1 ? 's' : ''} queued
+                    </span>
+                    <label style={{ fontSize: 12, color: C.muted, cursor: 'pointer', textDecoration: 'underline' }}>
+                      + Add more
+                      <input type="file" accept="image/*,video/*" multiple style={{ display: 'none' }}
+                        onChange={e => setTeamForm(f => ({ ...f, files: [...f.files, ...Array.from(e.target.files)] }))} />
+                    </label>
+                    <button onClick={() => setTeamForm(f => ({ ...f, files: [] }))}
+                      style={{ fontSize: 12, color: C.faint, background: 'none', border: 'none', cursor: 'pointer' }}>Clear all</button>
                   </div>
                 </div>
               )}
