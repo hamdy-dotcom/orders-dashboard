@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { format, eachDayOfInterval, parseISO, subDays } from 'date-fns'
-
 const C = {
   bg: '#13151f', surface: '#1c1f2e', card: '#222538', border: '#2e3350',
   accent: '#e8394a', accentSoft: '#e8394a18',
@@ -10,12 +9,9 @@ const C = {
   blue: '#3b82f6', blueSoft: '#3b82f618',
   purple: '#a855f7', text: '#e2e5f0', muted: '#6b7490', faint: '#343855',
 }
-
 const fmt = n => Number(n || 0).toLocaleString()
 const fmtSAR = n => `${fmt(Math.round(n || 0))} SAR`
-
 const RATES_TO_SAR = { SAR: 1, EGP: 0.073, USD: 3.75 }
-
 async function fetchExchangeRate(currency, date) {
   if (currency === 'SAR') return 1
   try {
@@ -26,7 +22,6 @@ async function fetchExchangeRate(currency, date) {
     return RATES_TO_SAR[currency] || 1
   }
 }
-
 function Label({ children, required }) {
   return (
     <div style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 6 }}>
@@ -34,7 +29,6 @@ function Label({ children, required }) {
     </div>
   )
 }
-
 function inputStyle(highlight) {
   return {
     background: C.bg, border: `1px solid ${highlight ? C.accent : C.border}`,
@@ -42,39 +36,38 @@ function inputStyle(highlight) {
     fontSize: 13, outline: 'none', width: '100%', boxSizing: 'border-box'
   }
 }
-
 export default function AdsSpending({ user, isAdmin, merchantId }) {
-  // Top filters
   const [overallFrom, setOverallFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
   const [overallTo, setOverallTo] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [pendingFrom, setPendingFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
+  const [pendingTo, setPendingTo] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [selectedMerchant, setSelectedMerchant] = useState(isAdmin ? '' : (merchantId || ''))
-
-  // Data
   const [merchantOptions, setMerchantOptions] = useState([])
-  const [productRows, setProductRows] = useState([]) // [{sku, productName, totalOrders, firstDate, lastDate, loggedDates, fromDate, toDate, amount, currency}]
-  const [existingEntries, setExistingEntries] = useState([])
+  const [productRows, setProductRows] = useState([])
   const [allEntries, setAllEntries] = useState([])
   const [loadingRows, setLoadingRows] = useState(false)
   const [loadingEntries, setLoadingEntries] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [submitSuccess, setSubmitSuccess] = useState('')
-  const [activeView, setActiveView] = useState('bulk') // 'bulk' | 'log'
+  const [activeView, setActiveView] = useState('bulk')
 
-  // Load merchants
+  const commitDates = () => {
+    if (pendingFrom !== overallFrom || pendingTo !== overallTo) {
+      setOverallFrom(pendingFrom)
+      setOverallTo(pendingTo)
+    }
+  }
+
   const loadMerchants = useCallback(async () => {
-    const { data } = await supabase
-      .from('orders')
-      .select('merchant_id')
-      .gte('created_at', overallFrom)
-      .lte('created_at', overallTo + 'T23:59:59')
+    const { data } = await supabase.from('orders').select('merchant_id')
+      .gte('created_at', overallFrom).lte('created_at', overallTo + 'T23:59:59')
     if (data) {
       const merchants = [...new Set(data.map(o => String(o.merchant_id)).filter(Boolean))].sort()
       setMerchantOptions(merchants)
     }
   }, [overallFrom, overallTo])
 
-  // Load all existing spend entries
   const loadEntries = useCallback(async () => {
     setLoadingEntries(true)
     let query = supabase.from('ads_spending').select('*').order('date_from', { ascending: false })
@@ -86,12 +79,8 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
 
   useEffect(() => { loadMerchants(); loadEntries() }, [loadMerchants, loadEntries])
 
-  // When merchant + date range selected, load product rows
   useEffect(() => {
-    if (!selectedMerchant || !overallFrom || !overallTo) {
-      setProductRows([])
-      return
-    }
+    if (!selectedMerchant || !overallFrom || !overallTo) { setProductRows([]); return }
     loadProductRows()
   }, [selectedMerchant, overallFrom, overallTo])
 
@@ -99,16 +88,13 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
     setLoadingRows(true)
     setProductRows([])
 
-    // Fetch orders for this merchant in date range
+    // Fetch ALL orders for this merchant ever (no date filter) to get true first/last dates
     let allOrders = []
     let page = 0
     while (true) {
-      const { data } = await supabase
-        .from('orders')
+      const { data } = await supabase.from('orders')
         .select('sku, product_name, created_at')
         .eq('merchant_id', selectedMerchant)
-        .gte('created_at', overallFrom)
-        .lte('created_at', overallTo + 'T23:59:59')
         .range(page * 1000, (page + 1) * 1000 - 1)
       if (!data || data.length === 0) break
       allOrders = allOrders.concat(data)
@@ -116,24 +102,26 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
       page++
     }
 
-    // Group by product
+    // Group by product — collect ALL dates (not filtered)
     const byProduct = {}
     for (const o of allOrders) {
       const sku = o.sku || 'unknown'
       const name = o.product_name || sku
       const key = `${sku}||${name}`
-      if (!byProduct[key]) byProduct[key] = { sku, productName: name, dates: [] }
+      if (!byProduct[key]) byProduct[key] = { sku, productName: name, allDates: [], filteredDates: [] }
       const d = o.created_at?.slice(0, 10)
-      if (d) byProduct[key].dates.push(d)
+      if (d) {
+        byProduct[key].allDates.push(d)
+        // Also track which orders fall within the current filter window
+        if (d >= overallFrom && d <= overallTo) byProduct[key].filteredDates.push(d)
+      }
     }
 
-    // Fetch existing spend entries for this merchant
-    const { data: spendData } = await supabase
-      .from('ads_spending')
-      .select('*')
-      .eq('merchant_id', selectedMerchant)
+    // Only show products that have orders within the filtered date range
+    const filteredProducts = Object.entries(byProduct).filter(([, prod]) => prod.filteredDates.length > 0)
 
-    // Build logged dates per product
+    // Fetch existing spend entries for this merchant
+    const { data: spendData } = await supabase.from('ads_spending').select('*').eq('merchant_id', selectedMerchant)
     const loggedByProduct = {}
     for (const entry of (spendData || [])) {
       const key = `${entry.sku}||${entry.product_name}`
@@ -144,31 +132,30 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
       } catch {}
     }
 
-    // Build rows
-    const rows = Object.entries(byProduct).map(([key, prod]) => {
-      const allDates = [...new Set(prod.dates)].sort()
+    const rows = filteredProducts.map(([key, prod]) => {
+      const allDates = [...new Set(prod.allDates)].sort()
+      const filteredDates = [...new Set(prod.filteredDates)].sort()
       const loggedDates = loggedByProduct[key] || new Set()
 
-      // Only dates within overall range that are NOT logged
-      const unloggedDates = allDates.filter(d =>
-        d >= overallFrom && d <= overallTo && !loggedDates.has(d)
-      )
-
+      // Unlogged = dates within filter range that haven't been logged yet
+      const unloggedDates = filteredDates.filter(d => !loggedDates.has(d))
       const fullyLogged = unloggedDates.length === 0
-      const fromDate = unloggedDates.length > 0 ? unloggedDates[0] : allDates[0] || overallFrom
-      const toDate = unloggedDates.length > 0 ? unloggedDates[unloggedDates.length - 1] : allDates[allDates.length - 1] || overallTo
+
+      // fromDate/toDate = ACTUAL first/last order date (not bounded to filter)
+      const trueFirst = allDates[0]
+      const trueLast = allDates[allDates.length - 1]
+
+      // If there are unlogged dates, use their range; otherwise use actual full range
+      const fromDate = unloggedDates.length > 0 ? unloggedDates[0] : trueFirst
+      const toDate = unloggedDates.length > 0 ? unloggedDates[unloggedDates.length - 1] : trueLast
 
       return {
-        key,
-        sku: prod.sku,
-        productName: prod.productName,
-        totalOrders: prod.dates.length,
-        fromDate,
-        toDate,
-        fullyLogged,
+        key, sku: prod.sku, productName: prod.productName,
+        totalOrders: prod.filteredDates.length,
+        fromDate, toDate, fullyLogged,
         unloggedDays: unloggedDates.length,
-        amount: '',
-        currency: 'SAR',
+        amount: '', currency: 'SAR',
+        trueFirst, trueLast,
       }
     }).sort((a, b) => b.totalOrders - a.totalOrders)
 
@@ -182,40 +169,25 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
 
   const handleBulkSubmit = async () => {
     const toSubmit = productRows.filter(r => r.amount && parseFloat(r.amount) > 0 && !r.fullyLogged)
-    if (toSubmit.length === 0) {
-      setSubmitError('No amounts entered!')
-      return
-    }
-    setSubmitting(true)
-    setSubmitError('')
-    setSubmitSuccess('')
-
+    if (toSubmit.length === 0) { setSubmitError('No amounts entered!'); return }
+    setSubmitting(true); setSubmitError(''); setSubmitSuccess('')
     try {
       for (const row of toSubmit) {
         const rate = await fetchExchangeRate(row.currency, row.fromDate)
         const totalSar = parseFloat(row.amount) * rate
         const [sku, productName] = row.key.split('||')
         const { error } = await supabase.from('ads_spending').insert({
-          merchant_id: selectedMerchant,
-          sku,
-          product_name: productName,
-          date_from: row.fromDate,
-          date_to: row.toDate,
-          total_amount: parseFloat(row.amount),
-          currency: row.currency,
-          amount_sar: Math.round(totalSar * 100) / 100,
-          exchange_rate: rate,
-          submitted_by: user?.id,
-          submitted_by_email: user?.email,
+          merchant_id: selectedMerchant, sku, product_name: productName,
+          date_from: row.fromDate, date_to: row.toDate,
+          total_amount: parseFloat(row.amount), currency: row.currency,
+          amount_sar: Math.round(totalSar * 100) / 100, exchange_rate: rate,
+          submitted_by: user?.id, submitted_by_email: user?.email,
         })
         if (error) throw new Error(error.message)
       }
       setSubmitSuccess(`✅ Logged ${toSubmit.length} entries successfully!`)
-      loadEntries()
-      loadProductRows()
-    } catch (e) {
-      setSubmitError(e.message || 'Error submitting')
-    }
+      loadEntries(); loadProductRows()
+    } catch (e) { setSubmitError(e.message || 'Error submitting') }
     setSubmitting(false)
   }
 
@@ -231,7 +203,6 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
 
   return (
     <div style={{ padding: '20px 24px', maxWidth: 1400, margin: '0 auto', color: C.text, fontFamily: "'Inter', sans-serif" }}>
-
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
@@ -244,11 +215,8 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
               background: activeView === v ? C.accent : C.card,
               color: activeView === v ? '#fff' : C.muted,
               border: `1px solid ${activeView === v ? C.accent : C.border}`,
-              borderRadius: 8, padding: '8px 16px', fontSize: 13,
-              cursor: 'pointer', fontWeight: 600
-            }}>
-              {v === 'bulk' ? '📋 Bulk Entry' : '📜 All Entries'}
-            </button>
+              borderRadius: 8, padding: '8px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 600
+            }}>{v === 'bulk' ? '📋 Bulk Entry' : '📜 All Entries'}</button>
           ))}
         </div>
       </div>
@@ -270,25 +238,23 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
       {/* BULK ENTRY VIEW */}
       {activeView === 'bulk' && (
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
-
-          {/* Filters */}
           <div style={{ padding: '16px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div>
-              <Label>Overall Date Range</Label>
+              <Label>Filter Date Range</Label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input type="date" value={overallFrom} onChange={e => setOverallFrom(e.target.value)} style={inputStyle(false)} />
+                <input type="date" value={pendingFrom} onChange={e => setPendingFrom(e.target.value)} onBlur={commitDates} style={inputStyle(false)} />
                 <span style={{ color: C.muted }}>→</span>
-                <input type="date" value={overallTo} onChange={e => setOverallTo(e.target.value)} style={inputStyle(false)} />
+                <input type="date" value={pendingTo} onChange={e => setPendingTo(e.target.value)} onBlur={commitDates} style={inputStyle(false)} />
               </div>
             </div>
             <div style={{ minWidth: 200 }}>
               <Label required>Merchant</Label>
               {isAdmin ? (
-              <select value={selectedMerchant} onChange={e => setSelectedMerchant(e.target.value)}
-                style={{ ...inputStyle(!!selectedMerchant), cursor: 'pointer' }}>
-                <option value="">— Select Merchant —</option>
-                {merchantOptions.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
+                <select value={selectedMerchant} onChange={e => setSelectedMerchant(e.target.value)}
+                  style={{ ...inputStyle(!!selectedMerchant), cursor: 'pointer' }}>
+                  <option value="">— Select Merchant —</option>
+                  {merchantOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
               ) : (
                 <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, padding: '7px 10px', color: C.accent, fontSize: 13, fontWeight: 600 }}>
                   Merchant {merchantId}
@@ -302,11 +268,8 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
             )}
           </div>
 
-          {/* Product Rows */}
           {!selectedMerchant ? (
-            <div style={{ padding: 48, textAlign: 'center', color: C.muted }}>
-              Select a merchant to see their products
-            </div>
+            <div style={{ padding: 48, textAlign: 'center', color: C.muted }}>Select a merchant to see their products</div>
           ) : loadingRows ? (
             <div style={{ padding: 48, textAlign: 'center', color: C.muted }}>Loading products...</div>
           ) : productRows.length === 0 ? (
@@ -317,7 +280,7 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr>
-                      {['Product', 'SKU', 'Orders', 'Unlogged Days', 'Date From', 'Date To', 'Amount Spent', 'Currency', 'Daily Avg', 'Status'].map(h => (
+                      {['Product', 'SKU', 'Orders', 'Unlogged Days', 'Spend From', 'Spend To', 'Amount Spent', 'Currency', 'Daily Avg', 'Status'].map(h => (
                         <th key={h} style={{
                           padding: '10px 14px', textAlign: 'left', color: C.muted,
                           fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em',
@@ -336,28 +299,25 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
                             return Math.round(parseFloat(row.amount) / days)
                           } catch { return 0 }
                         })() : 0
-
                       return (
                         <tr key={row.key} style={{
                           borderBottom: `1px solid ${C.border}`,
                           opacity: row.fullyLogged ? 0.5 : 1,
                           background: row.fullyLogged ? C.surface + '80' : 'transparent'
                         }}>
-                          {/* Product Name */}
                           <td style={{ padding: '12px 14px', color: C.text, maxWidth: 220 }}>
                             <span title={row.productName} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {row.productName?.slice(0, 40)}{row.productName?.length > 40 ? '…' : ''}
                             </span>
-                          </td>
-                          {/* SKU */}
-                          <td style={{ padding: '12px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{row.sku}</td>
-                          {/* Orders */}
-                          <td style={{ padding: '12px 14px', color: C.text, textAlign: 'right' }}>
-                            <span style={{ background: C.blueSoft, color: C.blue, padding: '2px 8px', borderRadius: 5, fontWeight: 700 }}>
-                              {fmt(row.totalOrders)}
+                            {/* Show true first/last order date as reference */}
+                            <span style={{ fontSize: 11, color: C.faint }}>
+                              First: {row.trueFirst} · Last: {row.trueLast}
                             </span>
                           </td>
-                          {/* Unlogged Days */}
+                          <td style={{ padding: '12px 14px', color: C.muted, whiteSpace: 'nowrap' }}>{row.sku}</td>
+                          <td style={{ padding: '12px 14px', color: C.text, textAlign: 'right' }}>
+                            <span style={{ background: C.blueSoft, color: C.blue, padding: '2px 8px', borderRadius: 5, fontWeight: 700 }}>{fmt(row.totalOrders)}</span>
+                          </td>
                           <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                             <span style={{
                               background: row.fullyLogged ? C.greenSoft : C.accentSoft,
@@ -372,32 +332,24 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
                               })()}
                             </span>
                           </td>
-                          {/* Date From */}
                           <td style={{ padding: '12px 14px' }}>
                             <input type="date" value={row.fromDate}
                               onChange={e => updateRow(row.key, 'fromDate', e.target.value)}
                               disabled={row.fullyLogged}
-                              style={{ ...inputStyle(false), width: 140, opacity: row.fullyLogged ? 0.4 : 1 }}
-                            />
+                              style={{ ...inputStyle(false), width: 140, opacity: row.fullyLogged ? 0.4 : 1 }} />
                           </td>
-                          {/* Date To */}
                           <td style={{ padding: '12px 14px' }}>
                             <input type="date" value={row.toDate}
                               onChange={e => updateRow(row.key, 'toDate', e.target.value)}
                               disabled={row.fullyLogged}
-                              style={{ ...inputStyle(false), width: 140, opacity: row.fullyLogged ? 0.4 : 1 }}
-                            />
+                              style={{ ...inputStyle(false), width: 140, opacity: row.fullyLogged ? 0.4 : 1 }} />
                           </td>
-                          {/* Amount */}
                           <td style={{ padding: '12px 14px' }}>
                             <input type="number" value={row.amount}
                               onChange={e => updateRow(row.key, 'amount', e.target.value)}
-                              disabled={row.fullyLogged}
-                              placeholder="0"
-                              style={{ ...inputStyle(!!row.amount && parseFloat(row.amount) > 0), width: 120, opacity: row.fullyLogged ? 0.4 : 1 }}
-                            />
+                              disabled={row.fullyLogged} placeholder="0"
+                              style={{ ...inputStyle(!!row.amount && parseFloat(row.amount) > 0), width: 120, opacity: row.fullyLogged ? 0.4 : 1 }} />
                           </td>
-                          {/* Currency */}
                           <td style={{ padding: '12px 14px' }}>
                             <select value={row.currency}
                               onChange={e => updateRow(row.key, 'currency', e.target.value)}
@@ -408,11 +360,9 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
                               <option value="USD">🇺🇸 USD</option>
                             </select>
                           </td>
-                          {/* Daily Avg */}
                           <td style={{ padding: '12px 14px', color: C.orange, whiteSpace: 'nowrap', fontWeight: 600 }}>
                             {dailyAvg > 0 ? `${fmt(dailyAvg)}/day` : '—'}
                           </td>
-                          {/* Status */}
                           <td style={{ padding: '12px 14px' }}>
                             {row.fullyLogged ? (
                               <span style={{ color: C.green, fontSize: 12 }}>✓ Logged</span>
@@ -428,12 +378,7 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
                   </tbody>
                 </table>
               </div>
-
-              {/* Submit Bar */}
-              <div style={{
-                padding: '16px 20px', borderTop: `1px solid ${C.border}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16
-              }}>
+              <div style={{ padding: '16px 20px', borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
                 <div style={{ fontSize: 13, color: C.muted }}>
                   {filledRows.length > 0 ? (
                     <span style={{ color: C.text }}>
@@ -444,17 +389,11 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   {submitError && <span style={{ color: C.accent, fontSize: 13 }}>{submitError}</span>}
                   {submitSuccess && <span style={{ color: C.green, fontSize: 13 }}>{submitSuccess}</span>}
-                  <button
-                    onClick={handleBulkSubmit}
-                    disabled={submitting || filledRows.length === 0}
-                    style={{
-                      background: filledRows.length === 0 ? C.faint : C.accent,
-                      color: '#fff', border: 'none', borderRadius: 8,
-                      padding: '10px 24px', fontSize: 14, cursor: filledRows.length === 0 ? 'not-allowed' : 'pointer',
-                      fontWeight: 700
-                    }}>
-                    {submitting ? 'Saving...' : `Log ${filledRows.length || ''} Entries`}
-                  </button>
+                  <button onClick={handleBulkSubmit} disabled={submitting || filledRows.length === 0} style={{
+                    background: filledRows.length === 0 ? C.faint : C.accent,
+                    color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px',
+                    fontSize: 14, cursor: filledRows.length === 0 ? 'not-allowed' : 'pointer', fontWeight: 700
+                  }}>{submitting ? 'Saving...' : `Log ${filledRows.length || ''} Entries`}</button>
                 </div>
               </div>
             </>
@@ -531,7 +470,6 @@ export default function AdsSpending({ user, isAdmin, merchantId }) {
           )}
         </div>
       )}
-
       <style>{`
         input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
         input[type="number"]::-webkit-inner-spin-button { opacity: 0.3; }
