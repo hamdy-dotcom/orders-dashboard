@@ -305,6 +305,8 @@ function SortableTable({ columns, rows, loading, rowStyle }) {
 export default function Dashboard({ user, isAdmin, merchantId }) {
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [pendingFrom, setPendingFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
+  const [pendingTo, setPendingTo] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [rawOrders, setRawOrders] = useState([])
   const [adsByProduct, setAdsByProduct] = useState({})
   const [adsByMerchant, setAdsByMerchant] = useState({})
@@ -525,8 +527,17 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   const merchantSkus = useMemo(() => computeMerchantSkuPerformance(filteredOrders), [filteredOrders])
 
   const quickRange = days => {
-    setDateFrom(format(subDays(new Date(), days), 'yyyy-MM-dd'))
-    setDateTo(format(new Date(), 'yyyy-MM-dd'))
+    const from = format(subDays(new Date(), days), 'yyyy-MM-dd')
+    const to = format(new Date(), 'yyyy-MM-dd')
+    setPendingFrom(from); setPendingTo(to)
+    setDateFrom(from); setDateTo(to)
+  }
+
+  const commitDates = () => {
+    if (pendingFrom !== dateFrom || pendingTo !== dateTo) {
+      setDateFrom(pendingFrom)
+      setDateTo(pendingTo)
+    }
   }
 
   const activeFiltersCount = selectedMerchants.length + selectedProducts.length +
@@ -646,10 +657,10 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
             <span style={{ color: C.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>Order Date</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '4px 10px' }}>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              <input type="date" value={pendingFrom} onChange={e => setPendingFrom(e.target.value)} onBlur={commitDates}
                 style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 13, outline: 'none' }} />
               <span style={{ color: C.muted }}>→</span>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              <input type="date" value={pendingTo} onChange={e => setPendingTo(e.target.value)} onBlur={commitDates}
                 style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 13, outline: 'none' }} />
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
