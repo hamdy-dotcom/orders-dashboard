@@ -319,8 +319,8 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   // Filters
   const [selectedMerchants, setSelectedMerchants] = useState([])
   const [selectedProducts, setSelectedProducts] = useState([])
-  const [codRange, setCodRange] = useState([0, 10000])
-  const [codBounds, setCodBounds] = useState([0, 10000])
+  const [codRange, setCodRange] = useState([0, 99999999])
+  const [codBounds, setCodBounds] = useState([0, 99999999])
   const [excludeLast10, setExcludeLast10] = useState(false)
   const [dispatchFrom, setDispatchFrom] = useState('')
   const [dispatchTo, setDispatchTo] = useState('')
@@ -439,12 +439,12 @@ export default function Dashboard({ user, isAdmin, merchantId }) {
   const filteredOrders = useMemo(() => applyFilters(rawOrders, {
     merchants: selectedMerchants,
     products: selectedProducts,
-    minCod: codRange[0],
-    maxCod: codRange[1],
+    minCod: codRange[0] !== codBounds[0] ? codRange[0] : null,
+    maxCod: codRange[1] !== codBounds[1] ? codRange[1] : null,
     excludeLast10Days: excludeLast10,
     dispatchFrom,
     dispatchTo,
-  }), [rawOrders, selectedMerchants, selectedProducts, codRange, excludeLast10, dispatchFrom, dispatchTo])
+  }), [rawOrders, selectedMerchants, selectedProducts, codRange, codBounds, excludeLast10, dispatchFrom, dispatchTo])
 
   // Computed tables from filtered orders
   const summary = useMemo(() => calcMetrics(filteredOrders), [filteredOrders])
