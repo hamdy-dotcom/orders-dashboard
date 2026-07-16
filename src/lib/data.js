@@ -16,7 +16,9 @@ export function calcMetrics(orders) {
   let totalCod = 0, confirmedCod = 0, dispatchedCod = 0, deliveredCod = 0
 
   for (const o of orders) {
-    const cod = parseFloat(o.cod) || 0
+    let rawCod = o.cod
+    if (rawCod !== null && rawCod !== undefined && typeof rawCod === 'object') rawCod = rawCod.value || rawCod.text || 0
+    const cod = parseFloat(String(rawCod || 0).replace(/[^\d.]/g, '')) || 0
     totalCod += cod
     if (o.confirmation_status === 'Confirmed') { confirmed++; confirmedCod += cod }
     if (o.confirmation_status === 'Cancelled') cancelled++
